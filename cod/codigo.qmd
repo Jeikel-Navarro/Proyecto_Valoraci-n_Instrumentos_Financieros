@@ -1,0 +1,96 @@
+---
+title: "proyecto_valoracion"
+format: html
+editor: visual
+---
+
+# Sección 1
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+library(readr)
+
+CCC <- read_delim("../data/Curvas Cero Cupón.csv", delim = ";")
+
+CCC
+
+CCC.colones <- CCC %>%
+  mutate(
+    curva = 1 / (1 + `Curva Cero Cupón BCCR (Colones)` / 100) ^ vencimiento
+  ) %>%
+  select(vencimiento, curva)
+
+CCC.dolares <- CCC %>%
+  mutate(
+    curva = 1 / (1 + `Curva Cero Cupón FED (Dólares)` / 100) ^ vencimiento
+    ) %>% 
+  select(vencimiento, curva)
+
+venc <- c(1, 2, 3)
+
+valor <- c(100, 100, 1000)
+
+df.filtrado <- CCC %>% 
+      filter(vencimiento %in% venc)
+  
+sum(df.filtrado["Curva Cero Cupón BCCR (Colones)"] * valor)
+```
+
+```{r}
+valor.presente.bonos <- function(curva, venc, valor){
+  df.filtrado <- curva %>% 
+      filter(vencimiento %in% venc)
+  
+  return(sum(df.filtrado$curva * valor))
+}
+
+valor.cupones <- function(curva, venc, periodo.cupon, valor, cupon){
+  
+  monto <- 0
+  
+  for(indice in seq(length(venc))){
+    
+    # Fechas de cupón
+    venc.cupones <- seq(periodo.cupon[indice] / 12, 
+                        venc[indice], 
+                        periodo.cupon[indice] / 12)
+    
+    # Cupón
+    valor.cupon <- valor * cupon[indice]
+    
+    # VP cupones
+    vp.cupones <- valor.presente.bonos(curva, venc.cupones, valor.cupon)
+    
+    # VP principal
+    vp.principal <- valor.presente.bonos(curva, venc[indice], valor)
+    print(vp.principal)
+    
+    monto <- monto + vp.cupones + vp.principal
+  }
+  
+  return(monto)
+}
+```
+
+```{r}
+venc.bonos.colones <- c(3, 8, 15, 20)
+valor <- 12000000
+bonos.colones <- valor.presente.bonos(CCC.colones, venc.bonos.colones, valor)
+
+bonos.colones
+
+venc.cupones.colones <- c(10)
+periodo.cupon <- c(2)
+cupon <- c(0.04)
+valor <- 21000000
+
+CCC.colones %>% filter(vencimiento %in% 10)
+cupones.colones <- valor.cupones(CCC.colones, venc.cupones.colones, periodo.cupon, valor, cupon)
+
+cupones.colones
+
+
+```

@@ -260,8 +260,15 @@ trayectoria <- function(u2, d2, cant.pasos){
 ## Simulaciones
 
 ```{r}
-montecarlo <- function(u2, d2, u, d, curva.CRC, curva.USD, valor.accion.CRC, valor.accion.USD, cant.simulaciones, S){
-  for(i in 1:(S*12)){
+montecarlo <- function(S, u2.CRC, d2.CRC, u.CRC, d.CRC,
+                       u2.USD, d2.USD, u.USD, d.USD,
+                       curva.CRC, curva.USD, 
+                       valor.accion.CRC, cant.acciones.CRC, 
+                       valor.accion.USD, cant.acciones.USD,
+                       valor.bonos.CRC, venc.bonos.CRC,
+                       valor.bonos.USD, venc.bonos.USD, 
+                       cant.simulaciones){
+  for(i in 1:cant.simulaciones){
     
     # trayectorias
     trayectoria.tasa.corta.CRC <- trayectoria(u2, d2, S*12)
@@ -270,12 +277,29 @@ montecarlo <- function(u2, d2, u, d, curva.CRC, curva.USD, valor.accion.CRC, val
     # mercado de Costa Rica
     
     ## mercado de acciones Costa Rica
-    mercado.acciones(u2, d2, u, d, curva.CRC, S*12, valor.accion.CRC, trayectoria.tasa.corta.CRC)
+    acciones.CRC <- mercado.acciones(u2 = u2.CRC, d2 = d2.CRC, u = u.CRC, d = d.CRC, curva = curva.CRC, cant.periodos = S*12, valor.accio = valor.accion.CRC, trayectoria.tasa.corta = trayectoria.tasa.corta.CRC) * cant.acciones.CRC
+    
+    (u2, d2, u, d, curva, cant.periodos, valor.accion, trayectoria.tasa.corta)
+    
+    ## Bonos cero cupón de Costa Rica
+    bonos.CRC <- valor.bonos(S = S, curva = curva.CRC, 
+                             venc = venc.bonos.CRC, valor = valor.bonos.CRC, u2.CRC, d2.CRC, trayectoria)
+    
+    function(S, curva, venc, valor, u2 = NULL, d2 = NULL, trayectoria = NULL){
+    
     
     # Mercado de Estados Unidos
     
-    ## mercado de acciones Costa Rica
-    mercado.acciones(u2, d2, u, d, curva.USD, S*12, valor.accion.USD, trayectoria.tasa.corta.USD)
+    ## mercado de acciones Estados Unidos
+    acciones.CRC <- mercado.acciones(u2 = u2.USD, d2 = d2.USD, 
+                                     u = u.USD, d = d.USD, 
+                                     curva = curva.USD, cant.periodos = S*12, 
+                                     valor.accion = valor.accion.USD, 
+                                     trayectoria.tasa.corta = trayectoria.tasa.corta.USD) * cant.acciones.USD
+    
+    ## Bonos cero cupón de Estados Unidos
+    bonos.USD <- valor.bonos(S, curva.USD, venc.bonos.USD, valor.bonos.USD, u2, d2, trayectoria)
+    
   }
 }
   
@@ -293,23 +317,52 @@ CCC.colones <- CCC %>%
   ) %>%
   select(vencimiento, precio)
 
+
 CCC.dolares <- CCC %>%
   mutate(
     precio = 1 / (1 + `Curva Cero Cupón FED (Dólares)` / 100) ^ vencimiento
     ) %>% 
   select(vencimiento, precio)
-
 ```
 
 ```{r}
-valor.presente.bonos <- function(curva, venc, valor){
-  df.filtrado <- curva %>% 
+valor.bonos <- function(S, curva, venc, valor, u2 = NULL, d2 = NULL, trayectoria = NULL){
+  if(S == 0){
+      df.filtrado <- curva %>% 
       filter(vencimiento %in% venc)
   
-  return(sum(df.filtrado$curva * valor))
+    return(sum(df.filtrado$precio * valor))
+  } else{
+    
+    S <- ceiling(S * 100) / 100
+    
+    precios <- numeric(length(venc))
+    
+    for(i in seq_along(venc)){
+      
+      # No se cuentan los bonos que ya hayan vencido para el tiempo S
+      if(venc[i] < S){
+        next
+      } 
+      
+      # Bonos que venzan en la fecha donde se este valorando el portafolio valen 1
+      if(venc[i] == S){
+        precios[i] <- 1
+      }
+      
+      # Se cuentan los bonos que aun esten en el portafolio
+      else{
+        precios[i] <- precios.ho.lee(u2, d2, curva, S, venc[i], trayectoria)
+      }
+    }
+    
+    return(sum(precios * valor))
+  }
 }
 
-valor.cupones <- function(curva, venc, periodo.cupon, valor, cupon){
+
+
+valor.bonos.cuponados <- function(S, curva, venc, periodo.cupon, valor, cupon,  u2 = NULL, d2 = NULL, trayectoria = NULL){
   
   monto <- 0
   
@@ -320,17 +373,16 @@ valor.cupones <- function(curva, venc, periodo.cupon, valor, cupon){
                         venc[indice], 
                         periodo.cupon[indice] / 12)
     
-    # Cupón
+    # valor del cupón
     valor.cupon <- valor * cupon[indice]
     
-    # VP cupones
-    vp.cupones <- valor.presente.bonos(curva, venc.cupones, valor.cupon)
+    # valor total de los cupones en S
+    cupones <- valor.bonos(S, curva, venc.cupones, valor.cupon, u2, d2, trayectoria)
     
-    # VP principal
-    vp.principal <- valor.presente.bonos(curva, venc[indice], valor)
-    print(vp.principal)
+    # valor total del principal en S
+    principal <- valor.bonos(S, curva, venc[indice], valor, u2, d2, trayectoria)
     
-    monto <- monto + vp.cupones + vp.principal
+    monto <- monto + cupones + principal
   }
   
   return(monto)
@@ -349,10 +401,17 @@ periodo.cupon <- c(2)
 cupon <- c(0.04)
 valor <- 21000000
 
-CCC.colones %>% filter(vencimiento %in% 10)
-cupones.colones <- valor.cupones(CCC.colones, venc.cupones.colones, periodo.cupon, valor, cupon)
+cupones.colones <- valor.bonos.cuponados(0, CCC.colones, venc.cupones.colones, periodo.cupon, valor, cupon)
+```
 
-cupones.colones
-
-
+```{r}
+valor.bonos(
+  S = 4,
+  curva = CCC.colones,
+  venc = c(3, 8, 15, 20),
+  valor = 12000000,
+  u2 = 1.0003,
+  d2 = 0.9997,
+  trayectoria = c(1,1,0,1,1,1,0,1,1,1,0,0,0,1,1)
+)
 ```

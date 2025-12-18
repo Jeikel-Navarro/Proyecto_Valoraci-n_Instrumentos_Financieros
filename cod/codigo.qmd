@@ -84,7 +84,7 @@ modelo.ho.lee <- function(u2, d2, curva, cant.periodos, trayectoria){
     
     resultado$rt[i+1] <- rt
     resultado$Ut[i+1] <- Ut
-    resultado$dt1[i+1] <- d
+    resultado$dt1[i+1] <- dt1
   }
   
   return(resultado)
@@ -391,7 +391,6 @@ montecarlo <- function(S, u2.CRC, d2.CRC, u.CRC, d.CRC,
   
 ```
 
-
 ```{r}
 valor.actual.portafolio <- function(S,
                        curva.CRC, curva.USD, 
@@ -460,7 +459,6 @@ valor.actual.portafolio <- function(S,
 }
 ```
 
-
 ```{r}
 montecarlo(S = 1/12, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
                        u2.USD = 1.00005, d2.USD = 0.99995, u.USD = 1.043396, d.USD = 0.9584087,
@@ -478,25 +476,28 @@ montecarlo(S = 1/12, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC =
 
 ```
 
-
 # Sección 1
 
 ```{r}
 
-CCC <- read_delim("../data/Curvas Cero Cupón.csv", delim = ";")
+library(dplyr)
 
+
+CCC <- read_delim("../data/Curvas Cero Cupón.csv", delim = ";")
 CCC.colones <- CCC %>%
-  mutate(
+  dplyr::mutate(
     precio = 1 / (1 + `Curva Cero Cupón BCCR (Colones)` / 100) ^ vencimiento
   ) %>%
-  select(vencimiento, precio)
+  dplyr::select(vencimiento, precio)
+
 
 
 CCC.dolares <- CCC %>%
-  mutate(
+  dplyr::mutate(
     precio = 1 / (1 + `Curva Cero Cupón FED (Dólares)` / 100) ^ vencimiento
-    ) %>% 
-  select(vencimiento, precio)
+  ) %>% 
+  dplyr::select(vencimiento, precio)
+
 ```
 
 ```{r}
@@ -584,30 +585,6 @@ write.csv(
 )
 ```
 
-Valor del portafolio en $t=4$
-
-
-```{r}
-valor.portafolio <- montecarlo(S = 4, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
-                       u2.USD = 1.00005, d2.USD = 0.99995, u.USD = 1.043396, d.USD = 0.9584087,
-                       curva.CRC = CCC.colones, curva.USD = CCC.dolares, 
-                       valor.accion.CRC = 23000, cant.acciones.CRC = 600, 
-                       valor.accion.USD = 135, cant.acciones.USD = 400,
-                       valor.bonos.CRC = 12000000, venc.bonos.CRC = c(3, 8, 15, 20),
-                       valor.bonos.USD = 14500, venc.bonos.USD = c(5, 10, 16),
-                       valor.bonos.cuponados.CRC = 21000000, venc.bonos.cuponados.CRC = c(10, 12, 15, 18),
-                       periodo.cupon.CRC = c(2, 3, 4, 12), cupon.CRC = c(0.04, 0.06, 0.07, 0.09),
-                       valor.bonos.cuponados.USD = 30000, venc.bonos.cuponados.USD = c(17),
-                       periodo.cupon.USD = c(12), cupon.USD = c(0.06),
-                       tipo.cambio = 498.19,
-                       cant.simulaciones = 10000)
-
-write.csv(
-  valor.portafolio,
-  file = "../Resultados/valor_portafolio_h4.csv",
-  row.names = FALSE
-)
-```
 
 
 ```{r}
@@ -636,5 +613,30 @@ valor.bonos(
   u2 = 1.0003,
   d2 = 0.9997,
   trayectoria = c(1,1,0,1,1,1,0,1,1,1,0,0,0,1,1)
+)
+```
+
+
+Valor del portafolio en $t=7$
+
+```{r}
+valor.portafolio <- montecarlo(S = 7, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
+                       u2.USD = 1.00005, d2.USD = 0.99995, u.USD = 1.043396, d.USD = 0.9584087,
+                       curva.CRC = CCC.colones, curva.USD = CCC.dolares, 
+                       valor.accion.CRC = 23000, cant.acciones.CRC = 600, 
+                       valor.accion.USD = 135, cant.acciones.USD = 400,
+                       valor.bonos.CRC = 12000000, venc.bonos.CRC = c(3, 8, 15, 20),
+                       valor.bonos.USD = 14500, venc.bonos.USD = c(5, 10, 16),
+                       valor.bonos.cuponados.CRC = 21000000, venc.bonos.cuponados.CRC = c(10, 12, 15, 18),
+                       periodo.cupon.CRC = c(2, 3, 4, 12), cupon.CRC = c(0.04, 0.06, 0.07, 0.09),
+                       valor.bonos.cuponados.USD = 30000, venc.bonos.cuponados.USD = c(17),
+                       periodo.cupon.USD = c(12), cupon.USD = c(0.06),
+                       tipo.cambio = 498.19,
+                       cant.simulaciones = 10000)
+
+write.csv(
+  valor.portafolio,
+  file = "../Resultados/valor_portafolio_h7.csv",
+  row.names = FALSE
 )
 ```

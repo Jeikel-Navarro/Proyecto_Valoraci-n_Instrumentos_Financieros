@@ -1,0 +1,468 @@
+---
+title: "Estimación parámetros CCR y distribuciones"
+format: html
+editor: visual
+embed-resources: true
+---
+
+```{r}
+
+library(tidyverse)
+library(readr)
+library(readxl)
+library(fitdistrplus)
+library(goftest)
+library(scales)
+library(dplyr)
+library(MASS)
+```
+
+
+# Cargar Excel Precios
+
+```{r}
+
+pan <- read_excel("C:/Users/Josué/Documents/UCR-2025/llCiclo/Valoración/Proyecto_Valoraci-n_Instrumentos_Financieros/data/pan.xlsx")
+
+pai <- read_excel("C:/Users/Josué/Documents/UCR-2025/llCiclo/Valoración/Proyecto_Valoraci-n_Instrumentos_Financieros/data/pai.xlsx")
+
+precpan <- as.numeric(pan$Precio)
+
+precpai <- as.numeric(pai$`Close Price`)
+
+
+
+```
+
+## Hallar parámetros bajo CRR
+
+```{r}
+
+rendpan_log <- diff(log(precpan))
+rendpai_log <- diff(log(precpai))
+
+sigma_mensualpan <- sd(rendpan_log)
+sigmapan <- sigma_mensualpan * sqrt(12)
+
+sigma_mensualpai <- sd(rendpai_log)
+sigmapai <- sigma_mensualpai * sqrt(12)
+
+delta_t <- 1/12
+
+upan <- exp(sigmapan * sqrt(delta_t))
+dpan <- exp(-sigmapan * sqrt(delta_t))
+upai <- exp(sigmapai * sqrt(delta_t))
+dpai <- exp(-sigmapai * sqrt(delta_t))
+dpai
+
+```
+
+# Distribución del Portafolio (Horizonte 4 años)
+
+## Criterio de selección del modelo
+```{r}
+
+portafolio.h4 <- read_delim("../resultados/valor_portafolio_h4.csv", delim = ",")
+
+x <- portafolio.h4$total.portafolio
+x <- x[is.finite(x) & x > 0]
+n <- length(x)
+
+fit_ln <- fitdist(x, "lnorm")
+fit_w  <- fitdist(x, "weibull")
+fit_n  <- fitdist(x, "norm")
+
+AIC_values <- c(
+  Lognormal = AIC(fit_ln),
+  Weibull   = AIC(fit_w),
+  Normal    = AIC(fit_n)
+)
+
+BIC_values <- c(
+  Lognormal = BIC(fit_ln),
+  Weibull   = BIC(fit_w),
+  Normal    = BIC(fit_n)
+)
+
+data.frame(
+  Distribucion = names(AIC_values),
+  AIC = AIC_values,
+  BIC = BIC_values
+)[order(AIC_values), ]
+```
+
+## Gráfico 
+```{r}
+
+fit <- MASS::fitdistr(x, "lognormal")
+mu_hat <- fit$estimate[["meanlog"]]
+sd_hat <- fit$estimate[["sdlog"]]
+
+ggplot(tibble(x = x), aes(x = x)) +
+  geom_histogram(
+    aes(y = after_stat(density)),
+    bins = nclass.FD(x),
+    fill = "#4E79A7",
+    color = "white",
+    alpha = 0.85
+  ) +
+  stat_function(
+    fun = dlnorm,
+    args = list(meanlog = mu_hat, sdlog = sd_hat),
+    linewidth = 1.5,
+    color = "#E15759"
+  ) +
+  scale_x_continuous(
+    labels = label_number(scale = 1e-6, suffix = " M")
+  ) +
+  labs(
+    title = "Portafolio en horizonte de 4 años con ajuste LogNormal",
+    subtitle = paste0("Prom = ", round(exp(mu_hat + sd_hat^2 / 2) / 1e6),
+                      " | DesvEst = ", round(sqrt((exp(sd_hat^2) - 1) * exp(2*mu_hat + sd_hat^2)) / 1e6)),
+    x = "Valor del portafolio (millones)",
+    y = "Densidad"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+```
+
+## Estadísticos 
+
+```{r}
+
+mu <- mu_hat
+sd <- sd_hat
+
+# CVaR (cola izquierda) para Lognormal
+cvar_left_lnorm <- function(alpha, meanlog, sdlog){
+  q <- qlnorm(alpha, meanlog = meanlog, sdlog = sdlog)
+  EX <- exp(meanlog + 0.5 * sdlog^2)                            
+  z  <- (log(q) - meanlog - sdlog^2) / sdlog
+  cvar <- EX * pnorm(z) / alpha                                
+  c(VaR = q, CVaR = cvar)
+}
+
+res_pes <- cvar_left_lnorm(alpha = 0.05, meanlog = mu, sdlog = sd)
+res_opt <- cvar_left_lnorm(alpha = 0.70, meanlog = mu, sdlog = sd)
+
+# En millones
+tabla <- rbind(
+  "Pesimista (cola izq 5%)"  = res_pes / 1e6,
+  "Optimista (cola izq 70%)" = res_opt / 1e6
+)
+
+round(tabla, 3)
+
+```
+
+# Distribución del Portafolio (Horizonte 7 años)
+
+## Criterio de selección del modelo
+```{r}
+
+portafolio.h7 <- read_delim("../resultados/valor_portafolio_h7.csv", delim = ",")
+
+x <- portafolio.h7$total.portafolio
+x <- x[is.finite(x) & x > 0]
+n <- length(x)
+
+fit_ln <- fitdist(x, "lnorm")
+fit_w  <- fitdist(x, "weibull")
+fit_n  <- fitdist(x, "norm")
+
+AIC_values <- c(
+  Lognormal = AIC(fit_ln),
+  Weibull   = AIC(fit_w),
+  Normal    = AIC(fit_n)
+)
+
+BIC_values <- c(
+  Lognormal = BIC(fit_ln),
+  Weibull   = BIC(fit_w),
+  Normal    = BIC(fit_n)
+)
+
+data.frame(
+  Distribucion = names(AIC_values),
+  AIC = AIC_values,
+  BIC = BIC_values
+)[order(AIC_values), ]
+```
+
+## Gráfico 
+```{r}
+
+fit <- MASS::fitdistr(x, "lognormal")
+mu_hat <- fit$estimate[["meanlog"]]
+sd_hat <- fit$estimate[["sdlog"]]
+
+ggplot(tibble(x = x), aes(x = x)) +
+  geom_histogram(
+    aes(y = after_stat(density)),
+    bins = nclass.FD(x),
+    fill = "#4E79A7",
+    color = "white",
+    alpha = 0.85
+  ) +
+  stat_function(
+    fun = dlnorm,
+    args = list(meanlog = mu_hat, sdlog = sd_hat),
+    linewidth = 1.5,
+    color = "#E15759"
+  ) +
+  scale_x_continuous(
+    labels = label_number(scale = 1e-6, suffix = " M")
+  ) +
+  labs(
+    title = "Portafolio en horizonte de 7 años con ajuste LogNormal",
+    subtitle = paste0("Prom = ", round(exp(mu_hat + sd_hat^2 / 2) / 1e6),
+                      " | DesvEst = ", round(sqrt((exp(sd_hat^2) - 1) * exp(2*mu_hat + sd_hat^2)) / 1e6)),
+    x = "Valor del portafolio (millones)",
+    y = "Densidad"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+```
+
+## Estadísticos 
+
+```{r}
+
+mu <- mu_hat
+sd <- sd_hat
+
+# CVaR (cola izquierda) para Lognormal
+cvar_left_lnorm <- function(alpha, meanlog, sdlog){
+  q <- qlnorm(alpha, meanlog = meanlog, sdlog = sdlog)
+  EX <- exp(meanlog + 0.5 * sdlog^2)                            
+  z  <- (log(q) - meanlog - sdlog^2) / sdlog
+  cvar <- EX * pnorm(z) / alpha                                
+  c(VaR = q, CVaR = cvar)
+}
+
+res_pes <- cvar_left_lnorm(alpha = 0.05, meanlog = mu, sdlog = sd)
+res_opt <- cvar_left_lnorm(alpha = 0.70, meanlog = mu, sdlog = sd)
+
+# En millones
+tabla <- rbind(
+  "Pesimista (cola izq 5%)"  = res_pes / 1e6,
+  "Optimista (cola izq 70%)" = res_opt / 1e6
+)
+
+round(tabla, 3)
+
+```
+
+# Distribución del Portafolio (Horizonte 10 años)
+
+## Criterio de selección del modelo
+```{r}
+
+portafolio.h10 <- read_delim("../resultados/valor_portafolio_h10.csv", delim = ",")
+
+x <- portafolio.h10$total.portafolio
+x <- x[is.finite(x) & x > 0]
+n <- length(x)
+
+fit_ln <- fitdist(x, "lnorm")
+fit_w  <- fitdist(x, "weibull")
+fit_n  <- fitdist(x, "norm")
+
+AIC_values <- c(
+  Lognormal = AIC(fit_ln),
+  Weibull   = AIC(fit_w),
+  Normal    = AIC(fit_n)
+)
+
+BIC_values <- c(
+  Lognormal = BIC(fit_ln),
+  Weibull   = BIC(fit_w),
+  Normal    = BIC(fit_n)
+)
+
+data.frame(
+  Distribucion = names(AIC_values),
+  AIC = AIC_values,
+  BIC = BIC_values
+)[order(AIC_values), ]
+```
+
+## Gráfico 
+```{r}
+
+fit <- MASS::fitdistr(x, "lognormal")
+mu_hat <- fit$estimate[["meanlog"]]
+sd_hat <- fit$estimate[["sdlog"]]
+
+ggplot(tibble(x = x), aes(x = x)) +
+  geom_histogram(
+    aes(y = after_stat(density)),
+    bins = nclass.FD(x),
+    fill = "#4E79A7",
+    color = "white",
+    alpha = 0.85
+  ) +
+  stat_function(
+    fun = dlnorm,
+    args = list(meanlog = mu_hat, sdlog = sd_hat),
+    linewidth = 1.5,
+    color = "#E15759"
+  ) +
+  scale_x_continuous(
+    labels = label_number(scale = 1e-6, suffix = " M")
+  ) +
+  labs(
+    title = "Portafolio en horizonte de 10 años con ajuste LogNormal",
+    subtitle = paste0("Prom = ", round(exp(mu_hat + sd_hat^2 / 2) / 1e6),
+                      " | DesvEst = ", round(sqrt((exp(sd_hat^2) - 1) * exp(2*mu_hat + sd_hat^2)) / 1e6)),
+    x = "Valor del portafolio (millones)",
+    y = "Densidad"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+```
+
+## Estadísticos 
+
+```{r}
+
+mu <- mu_hat
+sd <- sd_hat
+
+# CVaR (cola izquierda) para Lognormal
+cvar_left_lnorm <- function(alpha, meanlog, sdlog){
+  q <- qlnorm(alpha, meanlog = meanlog, sdlog = sdlog)
+  EX <- exp(meanlog + 0.5 * sdlog^2)                            
+  z  <- (log(q) - meanlog - sdlog^2) / sdlog
+  cvar <- EX * pnorm(z) / alpha                                
+  c(VaR = q, CVaR = cvar)
+}
+
+res_pes <- cvar_left_lnorm(alpha = 0.05, meanlog = mu, sdlog = sd)
+res_opt <- cvar_left_lnorm(alpha = 0.70, meanlog = mu, sdlog = sd)
+
+# En millones
+tabla <- rbind(
+  "Pesimista (cola izq 5%)"  = res_pes / 1e6,
+  "Optimista (cola izq 70%)" = res_opt / 1e6
+)
+
+round(tabla, 3)
+
+```
+
+# Distribución del Portafolio (Horizonte 15 años)
+
+## Criterio de selección del modelo
+```{r}
+
+portafolio.h15 <- read_delim("../resultados/valor_portafolio_h15.csv", delim = ",")
+
+x <- portafolio.h15$total.portafolio
+x <- x[is.finite(x) & x > 0]
+n <- length(x)
+
+fit_ln <- fitdist(x, "lnorm")
+fit_w  <- fitdist(x, "weibull")
+fit_n  <- fitdist(x, "norm")
+
+AIC_values <- c(
+  Lognormal = AIC(fit_ln),
+  Weibull   = AIC(fit_w),
+  Normal    = AIC(fit_n)
+)
+
+BIC_values <- c(
+  Lognormal = BIC(fit_ln),
+  Weibull   = BIC(fit_w),
+  Normal    = BIC(fit_n)
+)
+
+data.frame(
+  Distribucion = names(AIC_values),
+  AIC = AIC_values,
+  BIC = BIC_values
+)[order(AIC_values), ]
+```
+
+## Gráfico 
+```{r}
+
+fit <- MASS::fitdistr(x, "lognormal")
+mu_hat <- fit$estimate[["meanlog"]]
+sd_hat <- fit$estimate[["sdlog"]]
+
+ggplot(tibble(x = x), aes(x = x)) +
+  geom_histogram(
+    aes(y = after_stat(density)),
+    bins = nclass.FD(x),
+    fill = "#4E79A7",
+    color = "white",
+    alpha = 0.85
+  ) +
+  stat_function(
+    fun = dlnorm,
+    args = list(meanlog = mu_hat, sdlog = sd_hat),
+    linewidth = 1.5,
+    color = "#E15759"
+  ) +
+  scale_x_continuous(
+    labels = label_number(scale = 1e-6, suffix = " M")
+  ) +
+  labs(
+    title = "Portafolio en horizonte de 10 años con ajuste LogNormal",
+    subtitle = paste0("Prom = ", round(exp(mu_hat + sd_hat^2 / 2) / 1e6),
+                      " | DesvEst = ", round(sqrt((exp(sd_hat^2) - 1) * exp(2*mu_hat + sd_hat^2)) / 1e6)),
+    x = "Valor del portafolio (millones)",
+    y = "Densidad"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+```
+
+## Estadísticos 
+
+```{r}
+
+mu <- mu_hat
+sd <- sd_hat
+
+# CVaR (cola izquierda) para Lognormal
+cvar_left_lnorm <- function(alpha, meanlog, sdlog){
+  q <- qlnorm(alpha, meanlog = meanlog, sdlog = sdlog)
+  EX <- exp(meanlog + 0.5 * sdlog^2)                            
+  z  <- (log(q) - meanlog - sdlog^2) / sdlog
+  cvar <- EX * pnorm(z) / alpha                                
+  c(VaR = q, CVaR = cvar)
+}
+
+res_pes <- cvar_left_lnorm(alpha = 0.05, meanlog = mu, sdlog = sd)
+res_opt <- cvar_left_lnorm(alpha = 0.70, meanlog = mu, sdlog = sd)
+
+# En millones
+tabla <- rbind(
+  "Pesimista (cola izq 5%)"  = res_pes / 1e6,
+  "Optimista (cola izq 70%)" = res_opt / 1e6
+)
+
+round(tabla, 3)
+
+
+
+```

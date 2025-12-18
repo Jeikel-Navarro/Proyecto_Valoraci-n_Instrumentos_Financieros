@@ -8,6 +8,13 @@ editor: visual
 
 ```{r}
 library(tidyverse)
+library(readr)
+library(readxl)
+library(fitdistrplus)
+library(goftest)
+library(scales)
+library(dplyr)
+library(MASS)
 ```
 
 # Funciones
@@ -242,13 +249,104 @@ precios.ho.lee <- function(u2, d2, curva, S, T, trayectoria){
 }
 ```
 
+## Valorar bonos cero cupon y bonos cuponados
+
+```{r}
+acumular.hasta.S <- function(S, venc, trayectoria.tasa.corta){
+  
+  tiempo.inicio <- ceiling(venc * 100) / 100
+  tiempo.final <- ceiling(S * 100) / 100
+  
+  if(tiempo.inicio >= tiempo.final){
+    return(1)
+  }
+  
+  tasas <- trayectoria.tasa.corta$rt[(tiempo.inicio + 2):(tiempo.final + 1)]
+  
+  exp(sum(tasas))
+}
+```
+
+```{r}
+valor.bonos <- function(S, curva, venc, valor, u2 = NULL, d2 = NULL, trayectoria = NULL){
+  if(S == 0){
+      df.filtrado <- curva %>% 
+      filter(vencimiento %in% venc)
+  
+    return(sum(df.filtrado$precio * valor))
+  } else{
+    
+    trayectoria.tasa <- modelo.ho.lee(u2 = u2, d2 = d2, curva = curva,
+                                      cant.periodos = S * 12,
+                                      trayectoria = trayectoria)
+    
+    S <- ceiling(S * 100) / 100
+    
+    precios <- numeric(length(venc))
+    
+    for(i in seq_along(venc)){
+      
+      # No se cuentan los bonos que ya hayan vencido para el tiempo S
+      if(venc[i] < S){
+        precios[i] <- acumular_hasta_S(S = S, venc = venc[i], 
+                                       trayectoria.tasa.corta = traectoria.tasa)
+      } 
+      
+      # Bonos que venzan en la fecha donde se este valorando el portafolio valen 1
+      if(venc[i] == S){
+        precios[i] <- 1
+      }
+      
+      # Se cuentan los bonos que aun esten en el portafolio
+      else{
+        precios[i] <- precios.ho.lee(u2, d2, curva, S, venc[i], trayectoria)
+      }
+    }
+    
+    return(sum(precios * valor))
+  }
+}
+
+
+
+valor.bonos.cuponados <- function(S, curva, venc, periodo.cupon, valor, cupon,  u2 = NULL, d2 = NULL, trayectoria = NULL){
+  
+  monto <- 0
+  
+  for(indice in seq(length(venc))){
+    
+    # Fechas de cupón
+    venc.cupones <- seq(periodo.cupon[indice] / 12, 
+                        venc[indice], 
+                        periodo.cupon[indice] / 12)
+    
+    # valor del cupón
+    valor.cupon <- valor * cupon[indice]
+    
+    # valor total de los cupones en S
+    cupones <- valor.bonos(S, curva, venc.cupones, valor.cupon, u2, d2, trayectoria)
+    
+    # valor total del principal en S
+    principal <- valor.bonos(S, curva, venc[indice], valor, u2, d2, trayectoria)
+    
+    monto <- monto + cupones + principal
+  }
+  
+  return(monto)
+}
+```
+
 ## Tipo de cambio forward
 
 ```{r}
 tipo.cambio.forward <- function(S, tipo.cambio.actual, curva.CRC, curva.USD){
+  # Precio cero cupon P(0, S) de Costa Rica
   data.S.CRC <- curva.CRC %>% filter(curva.CRC$vencimiento == ceiling(S * 100) / 100)
+  
+  # Precio cero cupon P(0, S) de Estados Unidos 
   data.S.USD <- curva.USD %>% filter(curva.USD$vencimiento == ceiling(S * 100) / 100)
   
+  # tipo de cambio forward CRC/USD
   tipo.cambio.forward <- tipo.cambio.actual * data.S.USD$precio / data.S.CRC$precio
   
   return(tipo.cambio.forward)
@@ -364,10 +462,13 @@ montecarlo <- function(S, u2.CRC, d2.CRC, u.CRC, d.CRC,
                           d2 = d2.USD, 
                           trayectoria = trayectoria.tasa.corta.USD)
     
+    # Valor del portafolio de las acciones, bonos cero cupon y bonos cuponados de Costa Rica
     portafolio.CRC <- acciones.CRC + bonos.CRC + bonos.cuponados.CRC
     
+    # Valor del portafolio de las acciones, bonos cero cupon y bonos cuponados de Estados Unidos
     portafolio.USD <- acciones.USD + bonos.USD + bonos.cuponados.USD
     
+    # Valor total del portafolio en colones
     portafolio <- portafolio.CRC + portafolio.USD * tipo.cambio.forward
     
     resultados[sim, ] <- c(
@@ -437,10 +538,13 @@ valor.actual.portafolio <- function(S,
                           valor = valor.bonos.cuponados.USD, 
                           cupon = cupon.USD)
     
+    # Valor del portafolio de las acciones, bonos cero cupon y bonos cuponados de Costa Rica
     portafolio.CRC <- acciones.CRC + bonos.CRC + bonos.cuponados.CRC
     
+    # Valor del portafolio de las acciones, bonos cero cupon y bonos cuponados de Estados Unidos
     portafolio.USD <- acciones.USD + bonos.USD + bonos.cuponados.USD
     
+    # Valor total del portafolio en colones
     portafolio <- portafolio.CRC + portafolio.USD * tipo.cambio
     
     resultados <- data.frame(
@@ -476,95 +580,275 @@ montecarlo(S = 1/12, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC =
 
 ```
 
+## Cox Ross Rubinstein
+
+```{r}
+pan <- read_excel("../data/pan.xlsx")
+
+pai <- read_excel("../data/pai.xlsx")
+
+precpan <- as.numeric(pan$Precio)
+
+precpai <- as.numeric(pai$`Close Price`)
+
+```
+
+### Hallar parámetros bajo CRR
+
+```{r}
+rendpan.log <- diff(log(precpan))
+rendpai.log <- diff(log(precpai))
+
+sigma.mensualpan <- sd(rendpan.log)
+sigmapan <- sigm._mensualpan * sqrt(12)
+
+sigma.mensualpai <- sd(rendpai.log)
+sigmapai <- sigma.mensualpai * sqrt(12)
+
+delta_t <- 1/12
+
+upan <- exp(sigmapan * sqrt(delta.t))
+dpan <- exp(-sigmapan * sqrt(delta.t))
+upai <- exp(sigmapai * sqrt(delta.t))
+dpai <- exp(-sigmapai * sqrt(delta.t))
+dpai
+```
+
+## Ajustar distribuciones
+
+```{r}
+library(fitdistrplus)
+ajustar.distribucion <- function(
+  x,
+  distribuciones = c("lnorm", "weibull", "norm")
+){
+  # Limpieza
+  x <- x[is.finite(x) & x > 0]
+  if(length(x) < 10){
+    stop("Muy pocos datos para ajustar distribuciones.")
+  }
+  
+  fits <- list()
+  
+  for(d in distribuciones){
+    fit <- tryCatch(
+      suppressWarnings(
+        fitdist(x, d)
+      ),
+      error = function(e) NULL
+    )
+    
+    if(!is.null(fit) && all(is.finite(fit$estimate))){
+      fits[[d]] <- fit
+    }
+  }
+  
+  if(length(fits) == 0){
+    stop("Ninguna distribución pudo ajustarse.")
+  }
+  
+  tabla <- do.call(rbind, lapply(names(fits), function(d){
+    fit <- fits[[d]]
+    
+    data.frame(
+      Distribucion = d,
+      AIC = AIC(fit),
+      BIC = BIC(fit)
+    )
+  }))
+  return(tabla)
+}
+```
+
+## Gráfico de la distribución
+
+```{r}
+library(ggplot2)
+library(MASS)
+library(scales)
+library(tibble)
+
+
+graficar.ajuste <- function(
+  x,
+  distribucion = c("lnorm", "weibull", "norm"),
+  titulo = "Ajuste de distribución",
+  horizonte = NULL
+){
+  distribucion <- match.arg(distribucion)
+  
+  # Limpieza
+  x <- x[is.finite(x) & x > 0]
+  if(length(x) < 10){
+    stop("Muy pocos datos para graficar.")
+  }
+  
+  # 🔹 Mapeo correcto para MASS::fitdistr
+  dist_mass <- switch(
+    distribucion,
+    lnorm   = "lognormal",
+    norm    = "normal",
+    weibull = "weibull"
+  )
+  
+  # Ajuste MLE
+  fit <- MASS::fitdistr(x, dist_mass)
+  est <- fit$estimate
+  
+  # Media, desviación y densidad
+  if(distribucion == "lnorm"){
+    media <- exp(est["meanlog"] + est["sdlog"]^2 / 2)
+    desv  <- sqrt((exp(est["sdlog"]^2) - 1) * exp(2*est["meanlog"] + est["sdlog"]^2))
+    dens_fun  <- dlnorm
+    dens_args <- list(meanlog = est["meanlog"], sdlog = est["sdlog"])
+    
+  } else if(distribucion == "weibull"){
+    media <- est["scale"] * gamma(1 + 1 / est["shape"])
+    desv  <- sqrt(est["scale"]^2 *
+                   (gamma(1 + 2/est["shape"]) -
+                    gamma(1 + 1/est["shape"])^2))
+    dens_fun  <- dweibull
+    dens_args <- list(shape = est["shape"], scale = est["scale"])
+    
+  } else if(distribucion == "norm"){
+    media <- est["mean"]
+    desv  <- est["sd"]
+    dens_fun  <- dnorm
+    dens_args <- list(mean = est["mean"], sd = est["sd"])
+  }
+  
+  subtitulo <- paste0(
+    if(!is.null(horizonte)) paste0("Horizonte: ", horizonte, " años | ") else "",
+    "Media = ", round(media / 1e6, 2), " M",
+    " | Desv.Est = ", round(desv / 1e6, 2), " M"
+  )
+  
+  ggplot(tibble(x = x), aes(x = x)) +
+    geom_histogram(
+      aes(y = after_stat(density)),
+      bins = nclass.FD(x),
+      fill = "#4E79A7",
+      color = "white",
+      alpha = 0.85
+    ) +
+    stat_function(
+      fun = dens_fun,
+      args = dens_args,
+      linewidth = 1.5,
+      color = "#E15759"
+    ) +
+    scale_x_continuous(
+      labels = label_number(scale = 1e-6, suffix = " M")
+    ) +
+    labs(
+      title = titulo,
+      subtitle = subtitulo,
+      x = "Valor del portafolio (millones)",
+      y = "Densidad"
+    ) +
+    theme_minimal(base_size = 10) +
+    theme(
+      plot.title = element_text(face = "bold"),
+      panel.grid.minor = element_blank()
+    )
+}
+
+
+```
+
+## Estadisticas
+
+```{r}
+estadisticas.riesgo <- function(
+  x,
+  distribucion = c("lnorm", "norm", "weibull"),
+  alphas = c(0.05, 0.70),
+  escala.millones = TRUE
+){
+  distribucion <- match.arg(distribucion)
+  
+  # Limpieza
+  x <- x[is.finite(x)]
+  if(distribucion %in% c("lnorm", "weibull")){
+    x <- x[x > 0]
+  }
+  if(length(x) < 10){
+    stop("Muy pocos datos para calcular estadísticas.")
+  }
+  
+  # ---- Ajuste MLE ----
+  dist_mass <- switch(
+    distribucion,
+    lnorm   = "lognormal",
+    norm    = "normal",
+    weibull = "weibull"
+  )
+  
+  fit <- MASS::fitdistr(x, dist_mass)
+  est <- fit$estimate
+  
+  # ---- Funciones VaR / CVaR ----
+  resultados <- lapply(alphas, function(alpha){
+    
+    if(distribucion == "lnorm"){
+      q <- qlnorm(alpha, est["meanlog"], est["sdlog"])
+      EX <- exp(est["meanlog"] + 0.5 * est["sdlog"]^2)
+      z  <- (log(q) - est["meanlog"] - est["sdlog"]^2) / est["sdlog"]
+      cvar <- EX * pnorm(z) / alpha
+      
+    } else if(distribucion == "norm"){
+      q <- qnorm(alpha, est["mean"], est["sd"])
+      cvar <- est["mean"] - est["sd"] * dnorm(qnorm(alpha)) / alpha
+      
+    } else if(distribucion == "weibull"){
+      q <- qweibull(alpha, est["shape"], est["scale"])
+      # CVaR Weibull (cola izquierda)
+      cvar <- est["scale"] * gamma(1 + 1 / est["shape"]) *
+              pgamma((q / est["scale"])^est["shape"],
+                     shape = 1 + 1 / est["shape"]) / alpha
+    }
+    
+    c(VaR = q, CVaR = cvar)
+  })
+  
+  tabla <- do.call(rbind, resultados)
+  rownames(tabla) <- paste0("alpha = ", alphas)
+  
+  if(escala.millones){
+    tabla <- tabla / 1e6
+  }
+  
+  colnames(tabla) <- c("VaR", "CVaR")
+  
+  round(tabla, 3)
+}
+
+```
+
 # Sección 1
 
 ```{r}
 
-library(dplyr)
-
-
+# Extrae la curva cero cupon (rhos) para Costa Rica y Estados Unidos
 CCC <- read_delim("../data/Curvas Cero Cupón.csv", delim = ";")
+
+# Curva de Precios bono cero cupon de Costa Rica
 CCC.colones <- CCC %>%
-  dplyr::mutate(
+  mutate(
     precio = 1 / (1 + `Curva Cero Cupón BCCR (Colones)` / 100) ^ vencimiento
   ) %>%
-  dplyr::select(vencimiento, precio)
+  select(vencimiento, precio)
 
 
-
+# Curva de Precios bono cero cupon de Estados Unidos
 CCC.dolares <- CCC %>%
-  dplyr::mutate(
+  mutate(
     precio = 1 / (1 + `Curva Cero Cupón FED (Dólares)` / 100) ^ vencimiento
-  ) %>% 
-  dplyr::select(vencimiento, precio)
-
+    ) %>% 
+  select(vencimiento, precio)
 ```
 
-```{r}
-valor.bonos <- function(S, curva, venc, valor, u2 = NULL, d2 = NULL, trayectoria = NULL){
-  if(S == 0){
-      df.filtrado <- curva %>% 
-      filter(vencimiento %in% venc)
-  
-    return(sum(df.filtrado$precio * valor))
-  } else{
-    
-    S <- ceiling(S * 100) / 100
-    
-    precios <- numeric(length(venc))
-    
-    for(i in seq_along(venc)){
-      
-      # No se cuentan los bonos que ya hayan vencido para el tiempo S
-      if(venc[i] < S){
-        next
-      } 
-      
-      # Bonos que venzan en la fecha donde se este valorando el portafolio valen 1
-      if(venc[i] == S){
-        precios[i] <- 1
-      }
-      
-      # Se cuentan los bonos que aun esten en el portafolio
-      else{
-        precios[i] <- precios.ho.lee(u2, d2, curva, S, venc[i], trayectoria)
-      }
-    }
-    
-    return(sum(precios * valor))
-  }
-}
-
-
-
-valor.bonos.cuponados <- function(S, curva, venc, periodo.cupon, valor, cupon,  u2 = NULL, d2 = NULL, trayectoria = NULL){
-  
-  monto <- 0
-  
-  for(indice in seq(length(venc))){
-    
-    # Fechas de cupón
-    venc.cupones <- seq(periodo.cupon[indice] / 12, 
-                        venc[indice], 
-                        periodo.cupon[indice] / 12)
-    
-    # valor del cupón
-    valor.cupon <- valor * cupon[indice]
-    
-    # valor total de los cupones en S
-    cupones <- valor.bonos(S, curva, venc.cupones, valor.cupon, u2, d2, trayectoria)
-    
-    # valor total del principal en S
-    principal <- valor.bonos(S, curva, venc[indice], valor, u2, d2, trayectoria)
-    
-    monto <- monto + cupones + principal
-  }
-  
-  return(monto)
-}
-```
-
-Valor del portafolio en $t=0$
+## Valor del portafolio en $t=0$
 
 ```{r}
 portafolio <- valor.actual.portafolio(S = 0, curva.CRC = CCC.colones, curva.USD = CCC.dolares, 
@@ -585,39 +869,63 @@ write.csv(
 )
 ```
 
-
-
-```{r}
-venc.bonos.colones <- c(3, 8, 15, 20)
-valor <- 12000000
-bonos.colones <- valor.presente.bonos(CCC.colones, venc.bonos.colones, valor)
-
-bonos.colones
-
-venc.cupones.colones <- c(10, 12, 14)
-periodo.cupon <- c(2, 3, 4)
-cupon <- c(0.04, 0.06, 0.07)
-valor <- 21000000
-
-cupones.colones <- valor.bonos.cuponados(1/12, CCC.colones, venc.cupones.colones, periodo.cupon, valor, cupon, u2 = 1.0003, d2 = 0.9997, c(1,1,0))
-
-cupones.colones
-```
+## Valor del portafolio en $t=4$
 
 ```{r}
-valor.bonos(
-  S = 4,
-  curva = CCC.colones,
-  venc = c(3, 8, 15, 20),
-  valor = 12000000,
-  u2 = 1.0003,
-  d2 = 0.9997,
-  trayectoria = c(1,1,0,1,1,1,0,1,1,1,0,0,0,1,1)
+valor.portafolio <- montecarlo(S = 4, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
+                       u2.USD = 1.00005, d2.USD = 0.99995, u.USD = 1.043396, d.USD = 0.9584087,
+                       curva.CRC = CCC.colones, curva.USD = CCC.dolares, 
+                       valor.accion.CRC = 23000, cant.acciones.CRC = 600, 
+                       valor.accion.USD = 135, cant.acciones.USD = 400,
+                       valor.bonos.CRC = 12000000, venc.bonos.CRC = c(3, 8, 15, 20),
+                       valor.bonos.USD = 14500, venc.bonos.USD = c(5, 10, 16),
+                       valor.bonos.cuponados.CRC = 21000000, venc.bonos.cuponados.CRC = c(10, 12, 15, 18),
+                       periodo.cupon.CRC = c(2, 3, 4, 12), cupon.CRC = c(0.04, 0.06, 0.07, 0.09),
+                       valor.bonos.cuponados.USD = 30000, venc.bonos.cuponados.USD = c(17),
+                       periodo.cupon.USD = c(12), cupon.USD = c(0.06),
+                       tipo.cambio = 498.19,
+                       cant.simulaciones = 10000)
+
+write.csv(
+  valor.portafolio,
+  file = "../Resultados/valor_portafolio_h4.csv",
+  row.names = FALSE
 )
 ```
 
+### Ajustar distribución del portafolio en el horizonte 4
 
-Valor del portafolio en $t=7$
+```{r}
+portafolio.h4 <- read_delim("../resultados/valor_portafolio_h4.csv", delim = ",")
+
+h4 <- portafolio.h4$total.portafolio
+
+ajustar.distribucion(h4)
+
+grafica.h4 <- graficar.ajuste(x = h4, distribucion = c("lnorm"), titulo = "Portafolio en horizonte de 4 años con ajuste LogNormal")
+
+ggsave(
+  filename = "../Resultados/portafolio_h4_lognormal.jpg",
+  plot = grafica.h4,
+  width = 8,
+  height = 5,
+  units = "in",
+  dpi = 300
+)
+```
+
+### Estadísticas de riesgo
+
+```{r}
+estadisticas.riesgo(
+  x = h4,
+  distribucion = c("lnorm"),
+  alphas = c(0.05, 0.70),
+  escala.millones = TRUE
+)
+```
+
+## Valor del portafolio en $t=7$
 
 ```{r}
 valor.portafolio <- montecarlo(S = 7, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
@@ -639,4 +947,247 @@ write.csv(
   file = "../Resultados/valor_portafolio_h7.csv",
   row.names = FALSE
 )
+```
+
+### Ajustar distribución del portafolio en el horizonte 7
+
+```{r}
+portafolio.h7 <- read_delim("../resultados/valor_portafolio_h7.csv", delim = ",")
+
+h7 <- portafolio.h7$total.portafolio
+
+ajustar.distribucion(h7)
+
+grafica.h7 <- graficar.ajuste(x = h7, distribucion = c("lnorm"), titulo = "Portafolio en horizonte de 4 años con ajuste LogNormal")
+
+ggsave(
+  filename = "../Resultados/portafolio_h7_lognormal.jpg",
+  plot = grafica.h7,
+  width = 8,
+  height = 5,
+  units = "in",
+  dpi = 300
+)
+```
+
+### Estadísticas de riesgo
+
+```{r}
+estadisticas.riesgo(
+  x = h7,
+  distribucion = c("lnorm"),
+  alphas = c(0.05, 0.70),
+  escala.millones = TRUE
+)
+```
+
+## Valor del portafolio en $t=10$
+
+```{r}
+valor.portafolio <- montecarlo(S = 10, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
+                       u2.USD = 1.00005, d2.USD = 0.99995, u.USD = 1.043396, d.USD = 0.9584087,
+                       curva.CRC = CCC.colones, curva.USD = CCC.dolares, 
+                       valor.accion.CRC = 23000, cant.acciones.CRC = 600, 
+                       valor.accion.USD = 135, cant.acciones.USD = 400,
+                       valor.bonos.CRC = 12000000, venc.bonos.CRC = c(3, 8, 15, 20),
+                       valor.bonos.USD = 14500, venc.bonos.USD = c(5, 10, 16),
+                       valor.bonos.cuponados.CRC = 21000000, venc.bonos.cuponados.CRC = c(10, 12, 15, 18),
+                       periodo.cupon.CRC = c(2, 3, 4, 12), cupon.CRC = c(0.04, 0.06, 0.07, 0.09),
+                       valor.bonos.cuponados.USD = 30000, venc.bonos.cuponados.USD = c(17),
+                       periodo.cupon.USD = c(12), cupon.USD = c(0.06),
+                       tipo.cambio = 498.19,
+                       cant.simulaciones = 10000)
+
+write.csv(
+  valor.portafolio,
+  file = "../Resultados/valor_portafolio_h10.csv",
+  row.names = FALSE
+)
+```
+
+### Ajustar distribución del portafolio en el horizonte 10
+
+```{r}
+portafolio.h10 <- read_delim("../resultados/valor_portafolio_h10.csv", delim = ",")
+
+h10 <- portafolio.h10$total.portafolio
+
+ajustar.distribucion(h10)
+
+grafica.h10 <- graficar.ajuste(x = h10, distribucion = c("lnorm"), titulo = "Portafolio en horizonte de 10 años con ajuste LogNormal")
+
+ggsave(
+  filename = "../Resultados/portafolio_h10_lognormal.jpg",
+  plot = grafica.h10,
+  width = 8,
+  height = 5,
+  units = "in",
+  dpi = 300
+)
+```
+
+### Estadísticas de riesgo
+
+```{r}
+estadisticas.riesgo(
+  x = h10,
+  distribucion = c("lnorm"),
+  alphas = c(0.05, 0.70),
+  escala.millones = TRUE
+)
+```
+
+## Valor del portafolio en $t=15$
+
+```{r}
+valor.portafolio <- montecarlo(S = 15, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
+                       u2.USD = 1.00005, d2.USD = 0.99995, u.USD = 1.043396, d.USD = 0.9584087,
+                       curva.CRC = CCC.colones, curva.USD = CCC.dolares, 
+                       valor.accion.CRC = 23000, cant.acciones.CRC = 600, 
+                       valor.accion.USD = 135, cant.acciones.USD = 400,
+                       valor.bonos.CRC = 12000000, venc.bonos.CRC = c(3, 8, 15, 20),
+                       valor.bonos.USD = 14500, venc.bonos.USD = c(5, 10, 16),
+                       valor.bonos.cuponados.CRC = 21000000, venc.bonos.cuponados.CRC = c(10, 12, 15, 18),
+                       periodo.cupon.CRC = c(2, 3, 4, 12), cupon.CRC = c(0.04, 0.06, 0.07, 0.09),
+                       valor.bonos.cuponados.USD = 30000, venc.bonos.cuponados.USD = c(17),
+                       periodo.cupon.USD = c(12), cupon.USD = c(0.06),
+                       tipo.cambio = 498.19,
+                       cant.simulaciones = 10000)
+
+write.csv(
+  valor.portafolio,
+  file = "../Resultados/valor_portafolio_h15.csv",
+  row.names = FALSE
+)
+```
+
+### Ajustar distribución del portafolio en el horizonte 15
+
+```{r}
+portafolio.h15 <- read_delim("../resultados/valor_portafolio_h15.csv", delim = ",")
+
+h15 <- portafolio.h15$total.portafolio
+
+ajustar.distribucion(h15)
+
+grafica.h15 <- graficar.ajuste(x = h15, distribucion = c("lnorm"), titulo = "Portafolio en horizonte de 15 años con ajuste LogNormal")
+
+ggsave(
+  filename = "../Resultados/portafolio_h15_lognormal.jpg",
+  plot = grafica.h15,
+  width = 8,
+  height = 5,
+  units = "in",
+  dpi = 300
+)
+```
+
+### Estadísticas de riesgo
+
+```{r}
+estadisticas.riesgo(
+  x = h15,
+  distribucion = c("lnorm"),
+  alphas = c(0.05, 0.70),
+  escala.millones = TRUE
+)
+```
+
+# Sección 2
+
+```{r}
+valorar.compra.acciones <- function(S, u2.CRC, d2.CRC, u.CRC, d.CRC, 
+                                    curva.CRC, valor.accion.CRC, cant.acciones.nuevas,
+                                    Kf, cant.simulaciones){
+  
+  resultados <- data.frame(
+    simulacion = rep(NA_real_, cant.simulaciones),
+    acciones.CRC  = rep(NA_real_, cant.simulaciones),
+    compra.directa = rep(NA_real_, cant.simulaciones),
+    call.europea = rep(NA_real_, cant.simulaciones)
+  )
+  
+  K <- Kf - 5000
+  
+  
+  for(sim in 1:cant.simulaciones){
+    
+    # trayectorias
+    trayectoria.tasa.corta.CRC <- trayectoria(u2.CRC, d2.CRC, S*12)
+    
+    # mercado de Costa Rica
+    
+    ## mercado de acciones Costa Rica
+    acciones.CRC <- mercado.acciones(u2 = u2.CRC, d2 = d2.CRC, 
+                                     u = u.CRC, d = d.CRC, 
+                                     curva = curva.CRC, 
+                                     cant.periodos = S*12, 
+                                     valor.accion = valor.accion.CRC, 
+                                     trayectoria.tasa.corta = trayectoria.tasa.corta.CRC)$valor.accion[S * 12 + 1]
+    
+    # Compra de acciones directa (independiente al valor que tome la accion en el año 15)
+    compra.directa <- cant.acciones.nuevas * acciones.CRC
+
+    # Compra de acciones mediante una opcion call (depende del valor que tome la accion en el año 15 y el strike) 
+    call.europea <- cant.acciones.nuevas * pmax(acciones.CRC - K, 0)
+
+    
+    
+    resultados[sim, ] <- c(
+      simulacion = sim,
+      acciones.CRC = acciones.CRC,
+      compra.directa = compra.directa,
+      call.europea = call.europea
+    )
+  }
+  return(resultados)
+}
+```
+
+```{r}
+
+Kf <- 23000 * exp(15 * 12 * 0.0035)
+
+nuevas.acciones <- valorar.compra.acciones(S = 15, u2.CRC = 1.0003, d2.CRC = 0.9997, 
+                                           u.CRC = 1.061934, d.CRC = 0.9416777,
+                                           curva.CRC = CCC.colones, valor.accion.CRC = 23000, 
+                                           cant.acciones.nuevas = 300, Kf = Kf, cant.simulaciones = 10000)
+write.csv(
+  nuevas.acciones,
+  file = "../Resultados/nuevas_acciones.csv",
+  row.names = FALSE
+)
+```
+
+## Resultados
+
+### Vía compra directa
+
+```{r}
+
+nuevas.acciones <- read_delim("../resultados/nuevas_acciones.csv", delim = ",")
+
+compra.directa <- nuevas.acciones$compra.directa
+
+mean(compra.directa)
+
+mean(compra.directa + h15)
+
+sd(compra.directa + h15)
+
+```
+
+### Vía Opciones Call-Europea
+
+```{r}
+
+call.europea <- nuevas.acciones$call.europea
+
+mean(call.europea)
+
+sd(call.europea)
+
+mean(call.europea + h15)
+
+sd(call.europea + h15)
 ```

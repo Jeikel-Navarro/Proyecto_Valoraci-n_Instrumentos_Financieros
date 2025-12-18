@@ -91,7 +91,7 @@ modelo.ho.lee <- function(u2, d2, curva, cant.periodos, trayectoria){
 }
 ```
 
-## Dinamica de mercado 
+## Dinamica de mercado
 
 ```{r}
 prob.subida <- function(u, d, rt){
@@ -242,6 +242,19 @@ precios.ho.lee <- function(u2, d2, curva, S, T, trayectoria){
 }
 ```
 
+## Tipo de cambio forward
+
+```{r}
+tipo.cambio.forward <- function(S, tipo.cambio.actual, curva.CRC, curva.USD){
+  data.S.CRC <- curva.CRC %>% filter(curva.CRC$vencimiento == ceiling(S * 100) / 100)
+  data.S.USD <- curva.USD %>% filter(curva.USD$vencimiento == ceiling(S * 100) / 100)
+  
+  tipo.cambio.forward <- tipo.cambio.actual * data.S.USD$precio / data.S.CRC$precio
+  
+  return(tipo.cambio.forward)
+}
+```
+
 ## Caminatas
 
 ```{r}
@@ -266,46 +279,207 @@ montecarlo <- function(S, u2.CRC, d2.CRC, u.CRC, d.CRC,
                        valor.accion.CRC, cant.acciones.CRC, 
                        valor.accion.USD, cant.acciones.USD,
                        valor.bonos.CRC, venc.bonos.CRC,
-                       valor.bonos.USD, venc.bonos.USD, 
+                       valor.bonos.USD, venc.bonos.USD,
+                       valor.bonos.cuponados.CRC, venc.bonos.cuponados.CRC,
+                       periodo.cupon.CRC, cupon.CRC,
+                       valor.bonos.cuponados.USD, venc.bonos.cuponados.USD,
+                       periodo.cupon.USD, cupon.USD,
+                       tipo.cambio,
                        cant.simulaciones){
-  for(i in 1:cant.simulaciones){
+  
+  tipo.cambio.forward <- tipo.cambio.forward(S = S, tipo.cambio.actual = tipo.cambio, curva.CRC = curva.CRC, curva.USD = curva.USD)
+  
+  resultados <- data.frame(
+    simulacion = rep(NA_real_, cant.simulaciones),
+    acciones.CRC  = rep(NA_real_, cant.simulaciones),
+    bonos.cero.cupon.CRC = rep(NA_real_, cant.simulaciones),
+    bonos.cuponados.CRC = rep(NA_real_, cant.simulaciones),
+    acciones.USD = rep(NA_real_, cant.simulaciones),
+    bonos.cero.cupon.USD = rep(NA_real_, cant.simulaciones),
+    bonos.cuponados.USD = rep(NA_real_, cant.simulaciones),
+    portafolio.CRC = rep(NA_real_, cant.simulaciones),
+    portafolio.USD = rep(NA_real_, cant.simulaciones),
+    tipo.cambio = rep(NA_real_, cant.simulaciones),
+    total.portafolio = rep(NA_real_, cant.simulaciones),
+    Ut.tasa.corta.CRC = rep(NA_real_, cant.simulaciones), 
+    Ut.tasa.corta.USD = rep(NA_real_, cant.simulaciones)
+  )
+  
+  
+  for(sim in 1:cant.simulaciones){
     
     # trayectorias
-    trayectoria.tasa.corta.CRC <- trayectoria(u2, d2, S*12)
-    trayectoria.tasa.corta.USD <- trayectoria(u2, d2, S*12)
+    trayectoria.tasa.corta.CRC <- trayectoria(u2.CRC, d2.CRC, S*12)
+    trayectoria.tasa.corta.USD <- trayectoria(u2.USD, d2.USD, S*12)
     
     # mercado de Costa Rica
     
     ## mercado de acciones Costa Rica
-    acciones.CRC <- mercado.acciones(u2 = u2.CRC, d2 = d2.CRC, u = u.CRC, d = d.CRC, curva = curva.CRC, cant.periodos = S*12, valor.accio = valor.accion.CRC, trayectoria.tasa.corta = trayectoria.tasa.corta.CRC) * cant.acciones.CRC
-    
-    (u2, d2, u, d, curva, cant.periodos, valor.accion, trayectoria.tasa.corta)
-    
+    acciones.CRC <- mercado.acciones(u2 = u2.CRC, d2 = d2.CRC, 
+                                     u = u.CRC, d = d.CRC, 
+                                     curva = curva.CRC, 
+                                     cant.periodos = S*12, 
+                                     valor.accion = valor.accion.CRC, 
+                                     trayectoria.tasa.corta = trayectoria.tasa.corta.CRC)$valor.accion[S * 12 + 1] * cant.acciones.CRC
+
     ## Bonos cero cupón de Costa Rica
     bonos.CRC <- valor.bonos(S = S, curva = curva.CRC, 
-                             venc = venc.bonos.CRC, valor = valor.bonos.CRC, u2.CRC, d2.CRC, trayectoria)
+                             venc = venc.bonos.CRC, valor = valor.bonos.CRC, 
+                             u2 = u2.CRC, d2 = d2.CRC, 
+                             trayectoria = trayectoria.tasa.corta.CRC)
     
-    function(S, curva, venc, valor, u2 = NULL, d2 = NULL, trayectoria = NULL){
-    
+    ## Bonos cuponados de Costa Rica
+    bonos.cuponados.CRC <- valor.bonos.cuponados(S = S, curva = curva.CRC, 
+                          venc = venc.bonos.cuponados.CRC, 
+                          periodo.cupon = periodo.cupon.CRC, 
+                          valor = valor.bonos.cuponados.CRC, 
+                          cupon = cupon.CRC,  
+                          u2 = u2.CRC, 
+                          d2 = d2.CRC, 
+                          trayectoria = trayectoria.tasa.corta.CRC)
+
     
     # Mercado de Estados Unidos
     
     ## mercado de acciones Estados Unidos
-    acciones.CRC <- mercado.acciones(u2 = u2.USD, d2 = d2.USD, 
+    acciones.USD <- mercado.acciones(u2 = u2.USD, d2 = d2.USD, 
                                      u = u.USD, d = d.USD, 
                                      curva = curva.USD, cant.periodos = S*12, 
                                      valor.accion = valor.accion.USD, 
-                                     trayectoria.tasa.corta = trayectoria.tasa.corta.USD) * cant.acciones.USD
+                                     trayectoria.tasa.corta = trayectoria.tasa.corta.USD)$valor.accion[S * 12 + 1] * cant.acciones.USD
     
     ## Bonos cero cupón de Estados Unidos
-    bonos.USD <- valor.bonos(S, curva.USD, venc.bonos.USD, valor.bonos.USD, u2, d2, trayectoria)
+    bonos.USD <- valor.bonos(S = S, curva = curva.USD, 
+                             venc = venc.bonos.USD, valor = valor.bonos.USD, 
+                             u2 = u2.USD, d2 = d2.USD, 
+                             trayectoria =  trayectoria.tasa.corta.USD)
     
+    ## Bonos cuponados de Estados Unidos
+    bonos.cuponados.USD <- valor.bonos.cuponados(S = S, curva = curva.USD, 
+                          venc = venc.bonos.cuponados.USD, 
+                          periodo.cupon = periodo.cupon.USD, 
+                          valor = valor.bonos.cuponados.USD, 
+                          cupon = cupon.USD,  
+                          u2 = u2.USD, 
+                          d2 = d2.USD, 
+                          trayectoria = trayectoria.tasa.corta.USD)
+    
+    portafolio.CRC <- acciones.CRC + bonos.CRC + bonos.cuponados.CRC
+    
+    portafolio.USD <- acciones.USD + bonos.USD + bonos.cuponados.USD
+    
+    portafolio <- portafolio.CRC + portafolio.USD * tipo.cambio.forward
+    
+    resultados[sim, ] <- c(
+      simulacion = sim,
+      acciones.CRC = acciones.CRC,
+      bonos.cero.cupon.CRC = bonos.CRC,
+      bonos.cuponados.CRC = bonos.cuponados.CRC,
+      acciones.USD = acciones.USD,
+      bonos.cero.cupon.USD = bonos.USD,
+      bonos.cuponados.USD = bonos.cuponados.USD,
+      portafolio.CRC = portafolio.CRC,
+      portafolio.USD = portafolio.USD,
+      tipo.cambio = tipo.cambio.forward,
+      total.portafolio = portafolio,
+      Ut.tasa.corta.CRC = sum(trayectoria.tasa.corta.CRC),
+      Ut.tasa.corta.USD = sum(trayectoria.tasa.corta.USD)
+    )
   }
+  return(resultados)
 }
   
 ```
 
-## Sección 1
+
+```{r}
+valor.actual.portafolio <- function(S,
+                       curva.CRC, curva.USD, 
+                       valor.accion.CRC, cant.acciones.CRC, 
+                       valor.accion.USD, cant.acciones.USD,
+                       valor.bonos.CRC, venc.bonos.CRC,
+                       valor.bonos.USD, venc.bonos.USD,
+                       valor.bonos.cuponados.CRC, venc.bonos.cuponados.CRC,
+                       periodo.cupon.CRC, cupon.CRC,
+                       valor.bonos.cuponados.USD, venc.bonos.cuponados.USD,
+                       periodo.cupon.USD, cupon.USD,
+                       tipo.cambio){
+  
+    # mercado de Costa Rica
+    
+    ## mercado de acciones Costa Rica
+    acciones.CRC <- valor.accion.CRC * cant.acciones.CRC
+    
+    ## Bonos cero cupón de Costa Rica
+    bonos.CRC <- valor.bonos(S = S, curva = curva.CRC, 
+                             venc = venc.bonos.CRC, valor = valor.bonos.CRC)
+    
+    ## Bonos cuponados de Costa Rica
+    bonos.cuponados.CRC <- valor.bonos.cuponados(S = S, curva = curva.CRC, 
+                          venc = venc.bonos.cuponados.CRC, 
+                          periodo.cupon = periodo.cupon.CRC, 
+                          valor = valor.bonos.cuponados.CRC, 
+                          cupon = cupon.CRC)
+
+    
+    # Mercado de Estados Unidos
+    
+    ## mercado de acciones Estados Unidos
+    acciones.USD <- valor.accion.USD * cant.acciones.USD
+    
+    ## Bonos cero cupón de Estados Unidos
+    bonos.USD <- valor.bonos(S = S, curva = curva.USD, 
+                             venc = venc.bonos.USD, valor = valor.bonos.USD)
+    
+    ## Bonos cuponados de Estados Unidos
+    bonos.cuponados.USD <- valor.bonos.cuponados(S = S, curva = curva.USD, 
+                          venc = venc.bonos.cuponados.USD, 
+                          periodo.cupon = periodo.cupon.USD, 
+                          valor = valor.bonos.cuponados.USD, 
+                          cupon = cupon.USD)
+    
+    portafolio.CRC <- acciones.CRC + bonos.CRC + bonos.cuponados.CRC
+    
+    portafolio.USD <- acciones.USD + bonos.USD + bonos.cuponados.USD
+    
+    portafolio <- portafolio.CRC + portafolio.USD * tipo.cambio
+    
+    resultados <- data.frame(
+      acciones.CRC = acciones.CRC,
+      bonos.cero.cupon.CRC = bonos.CRC,
+      bonos.cuponados.CRC = bonos.cuponados.CRC,
+      acciones.USD = acciones.USD,
+      bonos.cero.cupon.USD = bonos.USD,
+      bonos.cuponados.USD = bonos.cuponados.USD,
+      portafolio.CRC = portafolio.CRC,
+      portafolio.USD = portafolio.USD,
+      tipo.cambio = tipo.cambio,
+      total.portafolio = portafolio
+    )
+  return(resultados)
+}
+```
+
+
+```{r}
+montecarlo(S = 1/12, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
+                       u2.USD = 1.00005, d2.USD = 0.99995, u.USD = 1.043396, d.USD = 0.9584087,
+                       curva.CRC = CCC.colones, curva.USD = CCC.dolares, 
+                       valor.accion.CRC = 23000, cant.acciones.CRC = 600, 
+                       valor.accion.USD = 135, cant.acciones.USD = 400,
+                       valor.bonos.CRC = 12000000, venc.bonos.CRC = c(3, 8, 15, 20),
+                       valor.bonos.USD = 14500, venc.bonos.USD = c(5, 10, 16),
+                       valor.bonos.cuponados.CRC = 21000000, venc.bonos.cuponados.CRC = c(10, 12, 15, 18),
+                       periodo.cupon.CRC = c(2, 3, 4, 12), cupon.CRC = c(0.04, 0.06, 0.07, 0.09),
+                       valor.bonos.cuponados.USD = 30000, venc.bonos.cuponados.USD = c(17),
+                       periodo.cupon.USD = c(12), cupon.USD = c(0.06),
+                       tipo.cambio = 498.19,
+                       cant.simulaciones = 1)
+
+```
+
+
+# Sección 1
 
 ```{r}
 
@@ -389,6 +563,53 @@ valor.bonos.cuponados <- function(S, curva, venc, periodo.cupon, valor, cupon,  
 }
 ```
 
+Valor del portafolio en $t=0$
+
+```{r}
+portafolio <- valor.actual.portafolio(S = 0, curva.CRC = CCC.colones, curva.USD = CCC.dolares, 
+                       valor.accion.CRC = 23000, cant.acciones.CRC = 600, 
+                       valor.accion.USD = 135, cant.acciones.USD = 400,
+                       valor.bonos.CRC = 12000000, venc.bonos.CRC = c(3, 8, 15, 20),
+                       valor.bonos.USD = 14500, venc.bonos.USD = c(5, 10, 16),
+                       valor.bonos.cuponados.CRC = 21000000, venc.bonos.cuponados.CRC = c(10, 12, 15, 18),
+                       periodo.cupon.CRC = c(2, 3, 4, 12), cupon.CRC = c(0.04, 0.06, 0.07, 0.09),
+                       valor.bonos.cuponados.USD = 30000, venc.bonos.cuponados.USD = c(17),
+                       periodo.cupon.USD = c(12), cupon.USD = c(0.06),
+                       tipo.cambio = 498.19)
+
+write.csv(
+  portafolio,
+  file = "../Resultados/valor_actual_portafolio.csv",
+  row.names = FALSE
+)
+```
+
+Valor del portafolio en $t=4$
+
+
+```{r}
+valor.portafolio <- montecarlo(S = 4, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
+                       u2.USD = 1.00005, d2.USD = 0.99995, u.USD = 1.043396, d.USD = 0.9584087,
+                       curva.CRC = CCC.colones, curva.USD = CCC.dolares, 
+                       valor.accion.CRC = 23000, cant.acciones.CRC = 600, 
+                       valor.accion.USD = 135, cant.acciones.USD = 400,
+                       valor.bonos.CRC = 12000000, venc.bonos.CRC = c(3, 8, 15, 20),
+                       valor.bonos.USD = 14500, venc.bonos.USD = c(5, 10, 16),
+                       valor.bonos.cuponados.CRC = 21000000, venc.bonos.cuponados.CRC = c(10, 12, 15, 18),
+                       periodo.cupon.CRC = c(2, 3, 4, 12), cupon.CRC = c(0.04, 0.06, 0.07, 0.09),
+                       valor.bonos.cuponados.USD = 30000, venc.bonos.cuponados.USD = c(17),
+                       periodo.cupon.USD = c(12), cupon.USD = c(0.06),
+                       tipo.cambio = 498.19,
+                       cant.simulaciones = 10000)
+
+write.csv(
+  valor.portafolio,
+  file = "../Resultados/valor_portafolio_h4.csv",
+  row.names = FALSE
+)
+```
+
+
 ```{r}
 venc.bonos.colones <- c(3, 8, 15, 20)
 valor <- 12000000
@@ -396,12 +617,14 @@ bonos.colones <- valor.presente.bonos(CCC.colones, venc.bonos.colones, valor)
 
 bonos.colones
 
-venc.cupones.colones <- c(10)
-periodo.cupon <- c(2)
-cupon <- c(0.04)
+venc.cupones.colones <- c(10, 12, 14)
+periodo.cupon <- c(2, 3, 4)
+cupon <- c(0.04, 0.06, 0.07)
 valor <- 21000000
 
-cupones.colones <- valor.bonos.cuponados(0, CCC.colones, venc.cupones.colones, periodo.cupon, valor, cupon)
+cupones.colones <- valor.bonos.cuponados(1/12, CCC.colones, venc.cupones.colones, periodo.cupon, valor, cupon, u2 = 1.0003, d2 = 0.9997, c(1,1,0))
+
+cupones.colones
 ```
 
 ```{r}

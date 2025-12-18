@@ -4,39 +4,301 @@ format: html
 editor: visual
 ---
 
-# Sección 1
+# Cargar librerías
 
 ```{r}
 library(tidyverse)
 ```
 
+# Funciones
+
+## Precios forward
+
+Se utiliza para calcular el precio forward $P_f(t; S, T)$, asumiendo que $t=0$
+
 ```{r}
-library(readr)
+# Función para calcular el precio forward dada la información actual 
+precios.forward <- function(S, T, curva){
+  
+  # se asume solo información actual (t=0)
+  
+  # ceiling(S * 100) / 100 se utiliza para redondear hacia arriba
+  data.S <- curva %>% filter(curva$vencimiento == ceiling(S * 100) / 100)
+  data.T <- curva %>% filter(curva$vencimiento == ceiling(T * 100) / 100)
+  
+  precio.S <- data.S$precio
+  precio.T <- data.T$precio
+  precio.forward <- precio.T / precio.S
+  
+  return(precio.forward)
+}
+```
+
+## Árbol de tasa corta
+
+```{r}
+# Función para generar trayectorias del árbol de tasa corta
+modelo.ho.lee <- function(u2, d2, curva, cant.periodos, trayectoria){
+  
+  # proporción de bajada respecto a la proporción de subida
+  k <- d2 / u2
+  
+  # probabilidad de subida en el árbol de tasa corta
+  q <- (1 - d2) / (u2 - d2)
+  
+  # valores iniciales
+  
+  # tasa corta actual (t=0, S=0, T=1/12)
+  r0 <- -log(precios.forward(0, 1/12, curva))
+  
+  # cantidad de veces de subida
+  Ut <- 0
+  
+  # dataframe para guardar los resultados de la trayectoria
+  
+  resultado <- data.frame(periodo = 0:cant.periodos,
+                           rt  = rep(NA_real_, cant.periodos + 1),
+                           Ut  = rep(NA_real_, cant.periodos + 1),
+                           dt1 = rep(NA_real_, cant.periodos + 1))
+  
+  # valores iniciales del dataframe en tiempo = 0
+  resultado$rt[1] <- r0
+  resultado$Ut[1] <- 0
+  resultado$dt1[1] <- 1
+  
+  for(i in 1:cant.periodos){
+    
+    # ver si la trayectoria subió o bajó
+    if(trayectoria[i] == 1){
+      Ut <- Ut + 1
+    }
+    
+    # dado que se valoriza mensualmente
+    S <- 1/12 * i
+    
+    # calcular la proporción de bajada
+    dt1 <- k^i / ((1-q) * k^i + q)
+    
+    # calcular la tasa corta en tiempo = i 
+    rt <- -log(precios.forward(S, S+1/12, curva)) - log(dt1) + Ut * log(k)
+    
+    resultado$rt[i+1] <- rt
+    resultado$Ut[i+1] <- Ut
+    resultado$dt1[i+1] <- d
+  }
+  
+  return(resultado)
+}
+```
+
+## Dinamica de mercado 
+
+```{r}
+prob.subida <- function(u, d, rt){
+  # se verifican condiciones de no arbitraje
+  if(u < exp(rt)){
+    prob.subida <- (exp(log(u)) - d) / (u - d)
+  } 
+  
+  if(d > exp(rt)){
+    prob.subida <- (exp(log(d)) - d) / (u - d)
+  } 
+  
+  else{
+    prob.subida <- (exp(rt) - d) / (u - d) 
+  }
+  
+  return(prob.subida)
+}
+```
+
+```{r}
+mercado.acciones <- function(u2, d2, u, d, curva, cant.periodos, valor.accion, trayectoria.tasa.corta){
+  
+  # valores fijos del árbol de tasa corta
+  
+  ## proporción de bajada respecto a la proporción de subida
+  k <- d2 / u2
+  
+  ## probabilidad de subida en el árbol de tasa corta
+  q <- (1 - d2) / (u2 - d2)
+  
+  # dataframe para guardar el resultado de la dinamica del mercado (precio de la acción)
+  dinamica <- data.frame(periodo = 0:cant.periodos,
+                           valor.accion  = rep(NA_real_, cant.periodos + 1),
+                           tasa.corta = rep(NA_real_, cant.periodos + 1),
+                           probabilidad = rep(NA_real_, cant.periodos + 1),
+                           Ut = rep(NA_real_, cant.periodos + 1))
+  
+  # usar la función del modelo de Hoo Lee para tener el dataframe con los valores de las tasas cortas
+  tasa.corta <- modelo.ho.lee(u2, d2, curva, cant.periodos, trayectoria.tasa.corta)
+  
+  rt <- tasa.corta$rt
+  Ut <- tasa.corta$Ut
+  
+  # valores iniciales del dataframe
+  dinamica$valor.accion[1] <- valor.accion
+  dinamica$tasa.corta <- rt
+  dinamica$Ut <- Ut
+  
+  # Caso base:
+  
+  ## probabilidad de subida del valor de las acciones
+  prob.subida <- prob.subida(u, d, dinamica$tasa.corta[1])
+  
+  ## se calcula si la accción sube o baja con una bernulli(prob.subida) 
+  movimiento <- rbinom(1, 1, prob.subida)
+  
+  ## valor de la acción en t = 1
+  if(movimiento == 1){
+    S1 <- valor.accion * u
+    prob <- prob.subida
+  } else{
+    S1 <- valor.accion * d
+    prob <- 1 - prob.subida
+  }
+  
+  dinamica$probabilidad[1] <- prob
+  dinamica$valor.accion[2] <- S1
+  
+  # Caso general:
+  for (i in 1:cant.periodos){
+
+    # probabilidad de subida del valor de las acciones
+    prob.subida <- prob.subida(u, d, dinamica$tasa.corta[i + 1])
+    
+    # se calcula si la accción sube o baja con una bernulli(prob.subida) 
+    movimiento <- rbinom(1, 1, prob.subida)
+    
+    # valor de la acción en t = i + 1
+    if(movimiento == 1){
+      St <- dinamica$valor.accion[i] * u
+      if(trayectoria.tasa.corta[i] == 1){
+        prob <- dinamica$probabilidad[i] * prob.subida * q
+      } else{
+        prob <- dinamica$probabilidad[i] * prob.subida * (1 - q)
+      }
+    } 
+    
+    else{
+      St <- dinamica$valor.accion[i] * d
+      if(trayectoria.tasa.corta[i] == 1){
+        prob <- dinamica$probabilidad[i] * (1 - prob.subida) * q
+      } else{
+        prob <- dinamica$probabilidad[i] * (1 - prob.subida) * (1 - q)
+      }
+    }
+    
+    dinamica$valor.accion[i + 1] <- St
+    dinamica$probabilidad[i + 1] <- prob
+  }
+  
+  return(dinamica)
+}
+```
+
+## Precios Ho Lee
+
+```{r}
+precios.ho.lee <- function(u2, d2, curva, S, T, trayectoria){
+  
+  # proporción de bajada respecto a la proporción de subida
+  k <- d2 / u2
+  
+  # probabilidad de subida en el árbol de tasa corta
+  q <- (1 - d2) / (u2 - d2)
+  
+  precio.forward <- precios.forward(S, T, curva)
+  
+  # cantidad de subidas hasta el momento S
+  Us <- sum(trayectoria)
+  
+  # inicializa la productoria
+  prod <- 1
+  
+  S <- floor(S*12)
+  T <- floor(T*12)
+  
+  for(n in 1:(T-S)){
+    # calcular la proporción de bajada para n
+    dn <- k^(n - 1) / ((1 - q) * k^(n - 1) + q)
+    
+    # calcular la proporción de bajada para n + s
+    d.n.plus.s <- k^(n + S - 1) / ((1 - q) * k^(n + S - 1) + q)
+    
+    # productoria del cociente d(n+s) / d(n)
+    prod <- prod * d.n.plus.s / dn
+  }
+  
+  # proporción de subida u(T-S+1)
+  u <- 1 / ((1-q) * k^(T - S) + q)
+  
+  # proporción de bajada d(T-S+1)
+  d <- k^(T - S) / ((1 - q) * k^(T - S) + q)
+  
+  precio <- precio.forward * prod * (u / d)^Us
+  
+  return(precio)
+}
+```
+
+## Caminatas
+
+```{r}
+trayectoria <- function(u2, d2, cant.pasos){
+  
+  # probabilidad de subida en el árbol de tasa corta
+  prob <- (1 - d2) / (u2 - d2)
+  
+  # trayectoria generada de unos y ceros apartir de una bernulli(prob)
+  trayectoria <- rbinom(cant.pasos, 1, prob)
+  
+  return(trayectoria)
+}
+```
+
+## Simulaciones
+
+```{r}
+montecarlo <- function(u2, d2, u, d, curva.CRC, curva.USD, valor.accion.CRC, valor.accion.USD, cant.simulaciones, S){
+  for(i in 1:(S*12)){
+    
+    # trayectorias
+    trayectoria.tasa.corta.CRC <- trayectoria(u2, d2, S*12)
+    trayectoria.tasa.corta.USD <- trayectoria(u2, d2, S*12)
+    
+    # mercado de Costa Rica
+    
+    ## mercado de acciones Costa Rica
+    mercado.acciones(u2, d2, u, d, curva.CRC, S*12, valor.accion.CRC, trayectoria.tasa.corta.CRC)
+    
+    # Mercado de Estados Unidos
+    
+    ## mercado de acciones Costa Rica
+    mercado.acciones(u2, d2, u, d, curva.USD, S*12, valor.accion.USD, trayectoria.tasa.corta.USD)
+  }
+}
+  
+```
+
+## Sección 1
+
+```{r}
 
 CCC <- read_delim("../data/Curvas Cero Cupón.csv", delim = ";")
 
-CCC
-
 CCC.colones <- CCC %>%
   mutate(
-    curva = 1 / (1 + `Curva Cero Cupón BCCR (Colones)` / 100) ^ vencimiento
+    precio = 1 / (1 + `Curva Cero Cupón BCCR (Colones)` / 100) ^ vencimiento
   ) %>%
-  select(vencimiento, curva)
+  select(vencimiento, precio)
 
 CCC.dolares <- CCC %>%
   mutate(
-    curva = 1 / (1 + `Curva Cero Cupón FED (Dólares)` / 100) ^ vencimiento
+    precio = 1 / (1 + `Curva Cero Cupón FED (Dólares)` / 100) ^ vencimiento
     ) %>% 
-  select(vencimiento, curva)
+  select(vencimiento, precio)
 
-venc <- c(1, 2, 3)
-
-valor <- c(100, 100, 1000)
-
-df.filtrado <- CCC %>% 
-      filter(vencimiento %in% venc)
-  
-sum(df.filtrado["Curva Cero Cupón BCCR (Colones)"] * valor)
 ```
 
 ```{r}

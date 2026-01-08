@@ -1,4 +1,20 @@
 ---
+title: "Proyecto de Valoración de Instrumentos Financieros I"
+author: "Jeikel Navarro Solis, Lemuel Méndez Hidalgo, Cristhofer Urrutia Cascante"
+format:
+  html:
+    toc: true            
+    toc-depth: 3        
+    toc-location: left   
+    number-sections: true
+    theme: united
+    highlight-style: tango
+    df-print: paged
+execute:
+  echo: true
+---
+
+---
 title: "proyecto_valoracion"
 format: html
 editor: visual
@@ -6,7 +22,7 @@ editor: visual
 
 # Cargar librerías
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 library(tidyverse)
 library(readr)
 library(readxl)
@@ -390,7 +406,7 @@ montecarlo <- function(S, u2.CRC, d2.CRC, u.CRC, d.CRC,
                        tipo.cambio,
                        cant.simulaciones){
   
-  tipo.cambio.forward <- 498.16
+  tipo.cambio.forward <- tipo.cambio.forward(S, tipo.cambio, curva.CRC, curva.USD)
   
   simulacion.vec <- numeric(cant.simulaciones)
   acciones.CRC.vec <- numeric(cant.simulaciones)
@@ -606,12 +622,12 @@ rendpan.log <- diff(log(precpan))
 rendpai.log <- diff(log(precpai))
 
 sigma.mensualpan <- sd(rendpan.log)
-sigmapan <- sigm._mensualpan * sqrt(12)
+sigmapan <- sigma.mensualpan * sqrt(12)
 
 sigma.mensualpai <- sd(rendpai.log)
 sigmapai <- sigma.mensualpai * sqrt(12)
 
-delta_t <- 1/12
+delta.t <- 1/12
 
 upan <- exp(sigmapan * sqrt(delta.t))
 dpan <- exp(-sigmapan * sqrt(delta.t))
@@ -867,8 +883,6 @@ portafolio <- valor.actual.portafolio(S = 0, curva.CRC = CCC.colones, curva.USD 
                        periodo.cupon.USD = c(12), cupon.USD = c(0.06),
                        tipo.cambio = 498.19)
 
-portafolio
-
 write.csv(
   portafolio,
   file = "../Resultados/valor_actual_portafolio.csv",
@@ -879,7 +893,7 @@ write.csv(
 ## Valor del portafolio en $t=4$
 
 ```{r}
-valor.portafolioh4 <- montecarlo(S = 15, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
+valor.portafolioh4 <- montecarlo(S = 4, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
                        u2.USD = 1.00005, d2.USD = 0.99995, u.USD = 1.043396, d.USD = 0.9584087,
                        curva.CRC = CCC.colones, curva.USD = CCC.dolares, 
                        valor.accion.CRC = 23000, cant.acciones.CRC = 600, 
@@ -891,9 +905,7 @@ valor.portafolioh4 <- montecarlo(S = 15, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC
                        valor.bonos.cuponados.USD = 30000, venc.bonos.cuponados.USD = c(17),
                        periodo.cupon.USD = c(12), cupon.USD = c(0.06),
                        tipo.cambio = 498.19,
-                       cant.simulaciones = 10)
-
-valor.portafolioh4
+                       cant.simulaciones = 10000)
 
 write.csv(
   valor.portafolioh4,

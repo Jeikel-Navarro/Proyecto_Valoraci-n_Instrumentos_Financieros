@@ -11,7 +11,6 @@ library(tidyverse)
 library(readr)
 library(readxl)
 library(fitdistrplus)
-library(goftest)
 library(scales)
 library(dplyr)
 library(MASS)
@@ -45,10 +44,14 @@ precios.forward <- function(S, T, curva){
 
 ```{r}
 # Función para generar trayectorias del árbol de tasa corta
-modelo.ho.lee <- function(u2, d2, curva, cant.periodos, trayectoria){
+modelo.ho.lee <- function(u2, d2, curva, cant.periodos, trayectoria.tasa.corta){
   
   # proporción de bajada respecto a la proporción de subida
   k <- d2 / u2
+  
+  # log proporción
+  
+  logk <- log(k)
   
   # probabilidad de subida en el árbol de tasa corta
   q <- (1 - d2) / (u2 - d2)
@@ -61,22 +64,18 @@ modelo.ho.lee <- function(u2, d2, curva, cant.periodos, trayectoria){
   # cantidad de veces de subida
   Ut <- 0
   
-  # dataframe para guardar los resultados de la trayectoria
+  # vectores para guardar los resultados de la trayectoria
+  rt.vec <- numeric(cant.periodos + 1)
+  Ut.vec <- numeric(cant.periodos + 1)
   
-  resultado <- data.frame(periodo = 0:cant.periodos,
-                           rt  = rep(NA_real_, cant.periodos + 1),
-                           Ut  = rep(NA_real_, cant.periodos + 1),
-                           dt1 = rep(NA_real_, cant.periodos + 1))
-  
-  # valores iniciales del dataframe en tiempo = 0
-  resultado$rt[1] <- r0
-  resultado$Ut[1] <- 0
-  resultado$dt1[1] <- 1
+  # valor inicial del dataframe en periodo  = 0
+  rt.vec[1] <- r0
+  Ut.vec[1] <- Ut
   
   for(i in 1:cant.periodos){
     
     # ver si la trayectoria subió o bajó
-    if(trayectoria[i] == 1){
+    if(trayectoria.tasa.corta[i] == 1){
       Ut <- Ut + 1
     }
     
@@ -84,17 +83,19 @@ modelo.ho.lee <- function(u2, d2, curva, cant.periodos, trayectoria){
     S <- 1/12 * i
     
     # calcular la proporción de bajada
-    dt1 <- k^i / ((1-q) * k^i + q)
+    dt1 <- k^i / ((1 - q) * k^i + q)
     
     # calcular la tasa corta en tiempo = i 
-    rt <- -log(precios.forward(S, S+1/12, curva)) - log(dt1) + Ut * log(k)
+    rt <- -log(precios.forward(S, S + 1/12, curva)) - log(dt1) + Ut * logk
     
-    resultado$rt[i+1] <- rt
-    resultado$Ut[i+1] <- Ut
-    resultado$dt1[i+1] <- dt1
+    rt.vec[i + 1] <- rt
+    Ut.vec[i + 1] <- Ut
   }
   
-  return(resultado)
+  return(data.frame(periodo = 0:cant.periodos,
+                          rt = rt.vec,
+                          trayectoria = c(0, trayectoria.tasa.corta), 
+                          Ut = Ut.vec))
 }
 ```
 
@@ -104,14 +105,17 @@ modelo.ho.lee <- function(u2, d2, curva, cant.periodos, trayectoria){
 prob.subida <- function(u, d, rt){
   # se verifican condiciones de no arbitraje
   if(u < exp(rt)){
+    # tome rt = log(u)
     prob.subida <- (exp(log(u)) - d) / (u - d)
   } 
   
   if(d > exp(rt)){
+    # tome rt = log(d)
     prob.subida <- (exp(log(d)) - d) / (u - d)
   } 
   
   else{
+    # definición cunado se cumplen las condiciones de arbitraje
     prob.subida <- (exp(rt) - d) / (u - d) 
   }
   
@@ -119,8 +123,9 @@ prob.subida <- function(u, d, rt){
 }
 ```
 
+
 ```{r}
-mercado.acciones <- function(u2, d2, u, d, curva, cant.periodos, valor.accion, trayectoria.tasa.corta){
+mercado.acciones <- function(u2, d2, u, d, curva, cant.periodos, valor.accion, tasa.corta){
   
   # valores fijos del árbol de tasa corta
   
@@ -130,84 +135,85 @@ mercado.acciones <- function(u2, d2, u, d, curva, cant.periodos, valor.accion, t
   ## probabilidad de subida en el árbol de tasa corta
   q <- (1 - d2) / (u2 - d2)
   
-  # dataframe para guardar el resultado de la dinamica del mercado (precio de la acción)
-  dinamica <- data.frame(periodo = 0:cant.periodos,
-                           valor.accion  = rep(NA_real_, cant.periodos + 1),
-                           tasa.corta = rep(NA_real_, cant.periodos + 1),
-                           probabilidad = rep(NA_real_, cant.periodos + 1),
-                           Ut = rep(NA_real_, cant.periodos + 1))
-  
-  # usar la función del modelo de Hoo Lee para tener el dataframe con los valores de las tasas cortas
-  tasa.corta <- modelo.ho.lee(u2, d2, curva, cant.periodos, trayectoria.tasa.corta)
-  
-  rt <- tasa.corta$rt
-  Ut <- tasa.corta$Ut
+  # vectores para guardar el resultado de la dinamica del mercado (precio de la acción)
+  valor.accion.vec  <- numeric(cant.periodos + 1)
+  probabilidad.vec <- numeric(cant.periodos + 1)
+  trayectoria.vec <- numeric(cant.periodos + 1)
+
   
   # valores iniciales del dataframe
-  dinamica$valor.accion[1] <- valor.accion
-  dinamica$tasa.corta <- rt
-  dinamica$Ut <- Ut
+  valor.accion.vec[1] <- valor.accion
+  probabilidad.vec[1] <- 1 # evento seguro, ya que es conocido hoy
+  trayectoria.vec[1] <- 0
+  
   
   # Caso base:
   
   ## probabilidad de subida del valor de las acciones
-  prob.subida <- prob.subida(u, d, dinamica$tasa.corta[1])
+  prob.subida <- prob.subida(u, d, tasa.corta$rt[1])
   
   ## se calcula si la accción sube o baja con una bernulli(prob.subida) 
-  movimiento <- rbinom(1, 1, prob.subida)
+  trayectoria.vec[2] <- rbinom(1, 1, prob.subida)
   
   ## valor de la acción en t = 1
-  if(movimiento == 1){
-    S1 <- valor.accion * u
-    prob <- prob.subida
+  if(trayectoria.vec[2] == 1){
+    valor.accion.vec[2] <- valor.accion.vec[1] * u
+    probabilidad.vec[2] <- prob.subida
   } else{
-    S1 <- valor.accion * d
-    prob <- 1 - prob.subida
+    valor.accion.vec[2] <- valor.accion.vec[1] * d
+    probabilidad.vec[2] <- 1 - prob.subida
   }
   
-  dinamica$probabilidad[1] <- prob
-  dinamica$valor.accion[2] <- S1
-  
   # Caso general:
-  for (i in 1:cant.periodos){
+  for (i in 2:cant.periodos){
 
     # probabilidad de subida del valor de las acciones
-    prob.subida <- prob.subida(u, d, dinamica$tasa.corta[i + 1])
+    prob.subida <- prob.subida(u, d, tasa.corta$rt[i + 1])
     
     # se calcula si la accción sube o baja con una bernulli(prob.subida) 
-    movimiento <- rbinom(1, 1, prob.subida)
+    trayectoria.vec[i + 1] <- rbinom(1, 1, prob.subida)
     
     # valor de la acción en t = i + 1
-    if(movimiento == 1){
-      St <- dinamica$valor.accion[i] * u
-      if(trayectoria.tasa.corta[i] == 1){
-        prob <- dinamica$probabilidad[i] * prob.subida * q
-      } else{
-        prob <- dinamica$probabilidad[i] * prob.subida * (1 - q)
+    
+    ## sube en el árbol de acciones
+    if(trayectoria.vec[i + 1] == 1){
+      St <- valor.accion.vec[i] * u
+      ## sube en el árbol de tasa corta
+      if(tasa.corta$Ut[i + 1] > tasa.corta$Ut[i]){
+        prob <- prob.subida * q
+      } 
+      ## baja en el árbol de tasa corta
+      else{ 
+        prob <- prob.subida * (1 - q) 
       }
     } 
-    
+    ## baja en el árbol de acciones
     else{
-      St <- dinamica$valor.accion[i] * d
-      if(trayectoria.tasa.corta[i] == 1){
-        prob <- dinamica$probabilidad[i] * (1 - prob.subida) * q
+      St <- valor.accion.vec[i] * d
+      ## sube en el árbol de tasa corta
+      if(tasa.corta$Ut[i + 1] > tasa.corta$Ut[i]){
+        prob <- (1 - prob.subida) * q
+      ## baja en el árbol de tasa corta
       } else{
-        prob <- dinamica$probabilidad[i] * (1 - prob.subida) * (1 - q)
+        prob <- (1 - prob.subida) * (1 - q)
       }
     }
     
-    dinamica$valor.accion[i + 1] <- St
-    dinamica$probabilidad[i + 1] <- prob
+    valor.accion.vec[i + 1] <- St
+    probabilidad.vec[i + 1] <- prob
   }
   
-  return(dinamica)
+  return(data.frame(periodo = 0:cant.periodos,
+                    valor.accion  = valor.accion.vec,
+                    trayectoria.accion = trayectoria.vec,
+                    probabilidad = probabilidad.vec))
 }
 ```
 
 ## Precios Ho Lee
 
 ```{r}
-precios.ho.lee <- function(u2, d2, curva, S, T, trayectoria){
+precios.ho.lee <- function(u2, d2, curva, S, T, trayectoria.tasa.corta){
   
   # proporción de bajada respecto a la proporción de subida
   k <- d2 / u2
@@ -215,16 +221,20 @@ precios.ho.lee <- function(u2, d2, curva, S, T, trayectoria){
   # probabilidad de subida en el árbol de tasa corta
   q <- (1 - d2) / (u2 - d2)
   
+  # calcular el precio forward
   precio.forward <- precios.forward(S, T, curva)
   
-  # cantidad de subidas hasta el momento S
-  Us <- sum(trayectoria)
+  # Número de meses hasta S
+  S <- ceiling(S * 12 * 100) / 100
+  T <- ceiling(T * 12 * 100) / 100
+  
+  # Filtrar trayectoria hasta S y sumar para obtener la cantidad de subidas hasta S
+  # Nota: trayectoria.tasa.corta comienza en t = 0, por lo que se debe de sumar 1
+  Us <- sum(trayectoria.tasa.corta[seq_len(S+1)])
   
   # inicializa la productoria
   prod <- 1
   
-  S <- floor(S*12)
-  T <- floor(T*12)
   
   for(n in 1:(T-S)){
     # calcular la proporción de bajada para n
@@ -252,23 +262,23 @@ precios.ho.lee <- function(u2, d2, curva, S, T, trayectoria){
 ## Valorar bonos cero cupon y bonos cuponados
 
 ```{r}
-acumular.hasta.S <- function(S, venc, trayectoria.tasa.corta){
+acumular.hasta.S <- function(S, venc, valores.tasa.corta){
   
-  tiempo.inicio <- ceiling(venc * 100) / 100
-  tiempo.final <- ceiling(S * 100) / 100
+  tiempo.inicio <- ceiling(venc * 12 * 100) / 100
+  tiempo.final <- ceiling(S * 12 * 100) / 100
   
   if(tiempo.inicio >= tiempo.final){
     return(1)
+  } 
+  else{
+    tasas <- valores.tasa.corta[(tiempo.inicio + 1):(tiempo.final)]
+    return(exp(sum(tasas)))
   }
-  
-  tasas <- trayectoria.tasa.corta$rt[(tiempo.inicio + 2):(tiempo.final + 1)]
-  
-  exp(sum(tasas))
 }
 ```
 
 ```{r}
-valor.bonos <- function(S, curva, venc, valor, u2 = NULL, d2 = NULL, trayectoria = NULL){
+valor.bonos <- function(S, curva, venc, valor, u2 = NULL, d2 = NULL, tasa.corta = NULL){
   if(S == 0){
       df.filtrado <- curva %>% 
       filter(vencimiento %in% venc)
@@ -276,20 +286,16 @@ valor.bonos <- function(S, curva, venc, valor, u2 = NULL, d2 = NULL, trayectoria
     return(sum(df.filtrado$precio * valor))
   } else{
     
-    trayectoria.tasa <- modelo.ho.lee(u2 = u2, d2 = d2, curva = curva,
-                                      cant.periodos = S * 12,
-                                      trayectoria = trayectoria)
-    
     S <- ceiling(S * 100) / 100
     
     precios <- numeric(length(venc))
     
     for(i in seq_along(venc)){
       
-      # No se cuentan los bonos que ya hayan vencido para el tiempo S
+      # Se acumulan los bonos que ya hayan vencido para el tiempo S
       if(venc[i] < S){
-        precios[i] <- acumular_hasta_S(S = S, venc = venc[i], 
-                                       trayectoria.tasa.corta = traectoria.tasa)
+        precios[i] <- acumular.hasta.S(S = S, venc = venc[i], 
+                                       valores.tasa.corta = tasa.corta$rt)
       } 
       
       # Bonos que venzan en la fecha donde se este valorando el portafolio valen 1
@@ -299,7 +305,7 @@ valor.bonos <- function(S, curva, venc, valor, u2 = NULL, d2 = NULL, trayectoria
       
       # Se cuentan los bonos que aun esten en el portafolio
       else{
-        precios[i] <- precios.ho.lee(u2, d2, curva, S, venc[i], trayectoria)
+        precios[i] <- precios.ho.lee(u2, d2, curva, S, venc[i], trayectoria.tasa.corta = tasa.corta$trayectoria)
       }
     }
     
@@ -307,9 +313,7 @@ valor.bonos <- function(S, curva, venc, valor, u2 = NULL, d2 = NULL, trayectoria
   }
 }
 
-
-
-valor.bonos.cuponados <- function(S, curva, venc, periodo.cupon, valor, cupon,  u2 = NULL, d2 = NULL, trayectoria = NULL){
+valor.bonos.cuponados <- function(S, curva, venc, periodo.cupon, valor, cupon,  u2 = NULL, d2 = NULL, tasa.corta = NULL){
   
   monto <- 0
   
@@ -324,10 +328,11 @@ valor.bonos.cuponados <- function(S, curva, venc, periodo.cupon, valor, cupon,  
     valor.cupon <- valor * cupon[indice]
     
     # valor total de los cupones en S
-    cupones <- valor.bonos(S, curva, venc.cupones, valor.cupon, u2, d2, trayectoria)
+    cupones <- valor.bonos(S, curva, venc.cupones, valor.cupon, u2, d2, tasa.corta)
     
     # valor total del principal en S
-    principal <- valor.bonos(S, curva, venc[indice], valor, u2, d2, trayectoria)
+    principal <- valor.bonos(S, curva, venc[indice], valor, u2, d2, tasa.corta)
+    
     
     monto <- monto + cupones + principal
   }
@@ -385,23 +390,21 @@ montecarlo <- function(S, u2.CRC, d2.CRC, u.CRC, d.CRC,
                        tipo.cambio,
                        cant.simulaciones){
   
-  tipo.cambio.forward <- tipo.cambio.forward(S = S, tipo.cambio.actual = tipo.cambio, curva.CRC = curva.CRC, curva.USD = curva.USD)
+  tipo.cambio.forward <- 498.16
   
-  resultados <- data.frame(
-    simulacion = rep(NA_real_, cant.simulaciones),
-    acciones.CRC  = rep(NA_real_, cant.simulaciones),
-    bonos.cero.cupon.CRC = rep(NA_real_, cant.simulaciones),
-    bonos.cuponados.CRC = rep(NA_real_, cant.simulaciones),
-    acciones.USD = rep(NA_real_, cant.simulaciones),
-    bonos.cero.cupon.USD = rep(NA_real_, cant.simulaciones),
-    bonos.cuponados.USD = rep(NA_real_, cant.simulaciones),
-    portafolio.CRC = rep(NA_real_, cant.simulaciones),
-    portafolio.USD = rep(NA_real_, cant.simulaciones),
-    tipo.cambio = rep(NA_real_, cant.simulaciones),
-    total.portafolio = rep(NA_real_, cant.simulaciones),
-    Ut.tasa.corta.CRC = rep(NA_real_, cant.simulaciones), 
-    Ut.tasa.corta.USD = rep(NA_real_, cant.simulaciones)
-  )
+  simulacion.vec <- numeric(cant.simulaciones)
+  acciones.CRC.vec <- numeric(cant.simulaciones)
+  bonos.cero.cupon.CRC.vec <- numeric(cant.simulaciones)
+  bonos.cuponados.CRC.vec <- numeric(cant.simulaciones)
+  acciones.USD.vec <- numeric(cant.simulaciones)
+  bonos.cero.cupon.USD.vec <- numeric(cant.simulaciones)
+  bonos.cuponados.USD.vec <- numeric(cant.simulaciones)
+  portafolio.CRC.vec <- numeric(cant.simulaciones)
+  portafolio.USD.vec <- numeric(cant.simulaciones)
+  tipo.cambio.vec <- numeric(cant.simulaciones)
+  total.portafolio.vec <- numeric(cant.simulaciones)
+  Ut.tasa.corta.CRC.vec <- numeric(cant.simulaciones)
+  Ut.tasa.corta.USD.vec <- numeric(cant.simulaciones)
   
   
   for(sim in 1:cant.simulaciones){
@@ -409,6 +412,14 @@ montecarlo <- function(S, u2.CRC, d2.CRC, u.CRC, d.CRC,
     # trayectorias
     trayectoria.tasa.corta.CRC <- trayectoria(u2.CRC, d2.CRC, S*12)
     trayectoria.tasa.corta.USD <- trayectoria(u2.USD, d2.USD, S*12)
+    
+    # tasas cortas
+    
+    ## Costa Rica
+    tasa.corta.CRC <- modelo.ho.lee(u2 = u2.CRC, d2 = d2.CRC, curva = curva.CRC, cant.periodos = S*12, trayectoria.tasa.corta = trayectoria.tasa.corta.CRC)
+    
+    ## Estados Unidos 
+    tasa.corta.USD <- modelo.ho.lee(u2 = u2.USD, d2 = d2.USD, curva = curva.USD, cant.periodos = S*12, trayectoria.tasa.corta = trayectoria.tasa.corta.USD)    
     
     # mercado de Costa Rica
     
@@ -418,13 +429,12 @@ montecarlo <- function(S, u2.CRC, d2.CRC, u.CRC, d.CRC,
                                      curva = curva.CRC, 
                                      cant.periodos = S*12, 
                                      valor.accion = valor.accion.CRC, 
-                                     trayectoria.tasa.corta = trayectoria.tasa.corta.CRC)$valor.accion[S * 12 + 1] * cant.acciones.CRC
+                                     tasa.corta.CRC)$valor.accion[S * 12 + 1] * cant.acciones.CRC
 
     ## Bonos cero cupón de Costa Rica
     bonos.CRC <- valor.bonos(S = S, curva = curva.CRC, 
                              venc = venc.bonos.CRC, valor = valor.bonos.CRC, 
-                             u2 = u2.CRC, d2 = d2.CRC, 
-                             trayectoria = trayectoria.tasa.corta.CRC)
+                             u2 = u2.CRC, d2 = d2.CRC, tasa.corta = tasa.corta.CRC)
     
     ## Bonos cuponados de Costa Rica
     bonos.cuponados.CRC <- valor.bonos.cuponados(S = S, curva = curva.CRC, 
@@ -433,8 +443,8 @@ montecarlo <- function(S, u2.CRC, d2.CRC, u.CRC, d.CRC,
                           valor = valor.bonos.cuponados.CRC, 
                           cupon = cupon.CRC,  
                           u2 = u2.CRC, 
-                          d2 = d2.CRC, 
-                          trayectoria = trayectoria.tasa.corta.CRC)
+                          d2 = d2.CRC,
+                          tasa.corta = tasa.corta.CRC)
 
     
     # Mercado de Estados Unidos
@@ -444,13 +454,13 @@ montecarlo <- function(S, u2.CRC, d2.CRC, u.CRC, d.CRC,
                                      u = u.USD, d = d.USD, 
                                      curva = curva.USD, cant.periodos = S*12, 
                                      valor.accion = valor.accion.USD, 
-                                     trayectoria.tasa.corta = trayectoria.tasa.corta.USD)$valor.accion[S * 12 + 1] * cant.acciones.USD
+                                     tasa.corta = tasa.corta.USD)$valor.accion[S * 12 + 1] * cant.acciones.USD
     
     ## Bonos cero cupón de Estados Unidos
     bonos.USD <- valor.bonos(S = S, curva = curva.USD, 
                              venc = venc.bonos.USD, valor = valor.bonos.USD, 
                              u2 = u2.USD, d2 = d2.USD, 
-                             trayectoria =  trayectoria.tasa.corta.USD)
+                             tasa.corta = tasa.corta.USD)
     
     ## Bonos cuponados de Estados Unidos
     bonos.cuponados.USD <- valor.bonos.cuponados(S = S, curva = curva.USD, 
@@ -459,8 +469,8 @@ montecarlo <- function(S, u2.CRC, d2.CRC, u.CRC, d.CRC,
                           valor = valor.bonos.cuponados.USD, 
                           cupon = cupon.USD,  
                           u2 = u2.USD, 
-                          d2 = d2.USD, 
-                          trayectoria = trayectoria.tasa.corta.USD)
+                          d2 = d2.USD,
+                          tasa.corta = tasa.corta.USD)
     
     # Valor del portafolio de las acciones, bonos cero cupon y bonos cuponados de Costa Rica
     portafolio.CRC <- acciones.CRC + bonos.CRC + bonos.cuponados.CRC
@@ -471,23 +481,36 @@ montecarlo <- function(S, u2.CRC, d2.CRC, u.CRC, d.CRC,
     # Valor total del portafolio en colones
     portafolio <- portafolio.CRC + portafolio.USD * tipo.cambio.forward
     
-    resultados[sim, ] <- c(
-      simulacion = sim,
-      acciones.CRC = acciones.CRC,
-      bonos.cero.cupon.CRC = bonos.CRC,
-      bonos.cuponados.CRC = bonos.cuponados.CRC,
-      acciones.USD = acciones.USD,
-      bonos.cero.cupon.USD = bonos.USD,
-      bonos.cuponados.USD = bonos.cuponados.USD,
-      portafolio.CRC = portafolio.CRC,
-      portafolio.USD = portafolio.USD,
-      tipo.cambio = tipo.cambio.forward,
-      total.portafolio = portafolio,
-      Ut.tasa.corta.CRC = sum(trayectoria.tasa.corta.CRC),
-      Ut.tasa.corta.USD = sum(trayectoria.tasa.corta.USD)
-    )
+    simulacion.vec[sim] <- sim
+    acciones.CRC.vec[sim] <- acciones.CRC
+    bonos.cero.cupon.CRC.vec[sim] <- bonos.CRC
+    bonos.cuponados.CRC.vec[sim] <- bonos.cuponados.CRC
+    acciones.USD.vec[sim] <- acciones.USD
+    bonos.cero.cupon.USD.vec[sim] <- bonos.USD
+    bonos.cuponados.USD.vec[sim] <- bonos.cuponados.USD
+    portafolio.CRC.vec[sim] <- portafolio.CRC
+    portafolio.USD.vec[sim] <- portafolio.USD
+    tipo.cambio.vec[sim] <- tipo.cambio.forward
+    total.portafolio.vec[sim] <- portafolio
+    Ut.tasa.corta.CRC.vec[sim] <- sum(trayectoria.tasa.corta.CRC)
+    Ut.tasa.corta.USD.vec[sim] <- sum(trayectoria.tasa.corta.USD)
+    
   }
-  return(resultados)
+  return(data.frame(
+          simulacion = simulacion.vec,
+          acciones.CRC = acciones.CRC.vec,
+          bonos.cero.cupon.CRC = bonos.cero.cupon.CRC.vec,
+          bonos.cuponados.CRC = bonos.cuponados.CRC.vec,
+          acciones.USD = acciones.USD.vec,
+          bonos.cero.cupon.USD = bonos.cero.cupon.USD.vec,
+          bonos.cuponados.USD = bonos.cuponados.USD.vec,
+          portafolio.CRC = portafolio.CRC.vec,
+          portafolio.USD = portafolio.USD.vec,
+          tipo.cambio = tipo.cambio.vec,
+          total.portafolio = total.portafolio.vec,
+          Ut.tasa.corta.CRC = Ut.tasa.corta.CRC.vec,
+          Ut.tasa.corta.USD = Ut.tasa.corta.USD.vec
+  ))
 }
   
 ```
@@ -561,23 +584,6 @@ valor.actual.portafolio <- function(S,
     )
   return(resultados)
 }
-```
-
-```{r}
-montecarlo(S = 1/12, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
-                       u2.USD = 1.00005, d2.USD = 0.99995, u.USD = 1.043396, d.USD = 0.9584087,
-                       curva.CRC = CCC.colones, curva.USD = CCC.dolares, 
-                       valor.accion.CRC = 23000, cant.acciones.CRC = 600, 
-                       valor.accion.USD = 135, cant.acciones.USD = 400,
-                       valor.bonos.CRC = 12000000, venc.bonos.CRC = c(3, 8, 15, 20),
-                       valor.bonos.USD = 14500, venc.bonos.USD = c(5, 10, 16),
-                       valor.bonos.cuponados.CRC = 21000000, venc.bonos.cuponados.CRC = c(10, 12, 15, 18),
-                       periodo.cupon.CRC = c(2, 3, 4, 12), cupon.CRC = c(0.04, 0.06, 0.07, 0.09),
-                       valor.bonos.cuponados.USD = 30000, venc.bonos.cuponados.USD = c(17),
-                       periodo.cupon.USD = c(12), cupon.USD = c(0.06),
-                       tipo.cambio = 498.19,
-                       cant.simulaciones = 1)
-
 ```
 
 ## Cox Ross Rubinstein
@@ -767,7 +773,7 @@ estadisticas.riesgo <- function(
 ){
   distribucion <- match.arg(distribucion)
   
-  # Limpieza
+  # limpieza
   x <- x[is.finite(x)]
   if(distribucion %in% c("lnorm", "weibull")){
     x <- x[x > 0]
@@ -787,7 +793,7 @@ estadisticas.riesgo <- function(
   fit <- MASS::fitdistr(x, dist_mass)
   est <- fit$estimate
   
-  # ---- Funciones VaR / CVaR ----
+  # funciones VaR / CVaR
   resultados <- lapply(alphas, function(alpha){
     
     if(distribucion == "lnorm"){
@@ -830,25 +836,24 @@ estadisticas.riesgo <- function(
 ```{r}
 
 # Extrae la curva cero cupon (rhos) para Costa Rica y Estados Unidos
-CCC <- read_delim("../data/Curvas Cero Cupón.csv", delim = ";")
+CCC <- read.csv("../data/Curvas Cero Cupón.csv", sep = ";")
 
 # Curva de Precios bono cero cupon de Costa Rica
 CCC.colones <- CCC %>%
   mutate(
-    precio = 1 / (1 + `Curva Cero Cupón BCCR (Colones)` / 100) ^ vencimiento
+    precio = 1 / (1 + Curva.Cero.Cupón.BCCR..Colones. / 100) ^ vencimiento
   ) %>%
-  select(vencimiento, precio)
-
+  dplyr::select(vencimiento, precio)
 
 # Curva de Precios bono cero cupon de Estados Unidos
 CCC.dolares <- CCC %>%
   mutate(
-    precio = 1 / (1 + `Curva Cero Cupón FED (Dólares)` / 100) ^ vencimiento
+    precio = 1 / (1 + Curva.Cero.Cupón.FED..Dólares. / 100) ^ vencimiento
     ) %>% 
-  select(vencimiento, precio)
+  dplyr::select(vencimiento, precio)
 ```
 
-## Valor del portafolio en $t=0$
+## Valor del portafolio en \$t=0\$
 
 ```{r}
 portafolio <- valor.actual.portafolio(S = 0, curva.CRC = CCC.colones, curva.USD = CCC.dolares, 
@@ -862,6 +867,8 @@ portafolio <- valor.actual.portafolio(S = 0, curva.CRC = CCC.colones, curva.USD 
                        periodo.cupon.USD = c(12), cupon.USD = c(0.06),
                        tipo.cambio = 498.19)
 
+portafolio
+
 write.csv(
   portafolio,
   file = "../Resultados/valor_actual_portafolio.csv",
@@ -872,7 +879,7 @@ write.csv(
 ## Valor del portafolio en $t=4$
 
 ```{r}
-valor.portafolio <- montecarlo(S = 4, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
+valor.portafolioh4 <- montecarlo(S = 15, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
                        u2.USD = 1.00005, d2.USD = 0.99995, u.USD = 1.043396, d.USD = 0.9584087,
                        curva.CRC = CCC.colones, curva.USD = CCC.dolares, 
                        valor.accion.CRC = 23000, cant.acciones.CRC = 600, 
@@ -884,10 +891,12 @@ valor.portafolio <- montecarlo(S = 4, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 
                        valor.bonos.cuponados.USD = 30000, venc.bonos.cuponados.USD = c(17),
                        periodo.cupon.USD = c(12), cupon.USD = c(0.06),
                        tipo.cambio = 498.19,
-                       cant.simulaciones = 10000)
+                       cant.simulaciones = 10)
+
+valor.portafolioh4
 
 write.csv(
-  valor.portafolio,
+  valor.portafolioh4,
   file = "../Resultados/valor_portafolio_h4.csv",
   row.names = FALSE
 )
@@ -928,7 +937,7 @@ estadisticas.riesgo(
 ## Valor del portafolio en $t=7$
 
 ```{r}
-valor.portafolio <- montecarlo(S = 7, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
+valor.portafolioh7 <- montecarlo(S = 7, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
                        u2.USD = 1.00005, d2.USD = 0.99995, u.USD = 1.043396, d.USD = 0.9584087,
                        curva.CRC = CCC.colones, curva.USD = CCC.dolares, 
                        valor.accion.CRC = 23000, cant.acciones.CRC = 600, 
@@ -943,7 +952,7 @@ valor.portafolio <- montecarlo(S = 7, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 
                        cant.simulaciones = 10000)
 
 write.csv(
-  valor.portafolio,
+  valor.portafolioh7,
   file = "../Resultados/valor_portafolio_h7.csv",
   row.names = FALSE
 )
@@ -984,7 +993,7 @@ estadisticas.riesgo(
 ## Valor del portafolio en $t=10$
 
 ```{r}
-valor.portafolio <- montecarlo(S = 10, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
+valor.portafolioh10 <- montecarlo(S = 10, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
                        u2.USD = 1.00005, d2.USD = 0.99995, u.USD = 1.043396, d.USD = 0.9584087,
                        curva.CRC = CCC.colones, curva.USD = CCC.dolares, 
                        valor.accion.CRC = 23000, cant.acciones.CRC = 600, 
@@ -999,7 +1008,7 @@ valor.portafolio <- montecarlo(S = 10, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC =
                        cant.simulaciones = 10000)
 
 write.csv(
-  valor.portafolio,
+  valor.portafolioh10,
   file = "../Resultados/valor_portafolio_h10.csv",
   row.names = FALSE
 )
@@ -1040,7 +1049,7 @@ estadisticas.riesgo(
 ## Valor del portafolio en $t=15$
 
 ```{r}
-valor.portafolio <- montecarlo(S = 15, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
+valor.portafolioh15 <- montecarlo(S = 15, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC = 1.061934, d.CRC = 0.9416777,
                        u2.USD = 1.00005, d2.USD = 0.99995, u.USD = 1.043396, d.USD = 0.9584087,
                        curva.CRC = CCC.colones, curva.USD = CCC.dolares, 
                        valor.accion.CRC = 23000, cant.acciones.CRC = 600, 
@@ -1055,7 +1064,7 @@ valor.portafolio <- montecarlo(S = 15, u2.CRC = 1.0003, d2.CRC = 0.9997, u.CRC =
                        cant.simulaciones = 10000)
 
 write.csv(
-  valor.portafolio,
+  valor.portafolioh15,
   file = "../Resultados/valor_portafolio_h15.csv",
   row.names = FALSE
 )

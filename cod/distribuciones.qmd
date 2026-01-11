@@ -423,7 +423,7 @@ ggplot(tibble(x = x), aes(x = x)) +
     labels = label_number(scale = 1e-6, suffix = " M")
   ) +
   labs(
-    title = "Portafolio en horizonte de 10 años con ajuste LogNormal",
+    title = "Portafolio en horizonte de 15 años con ajuste LogNormal",
     subtitle = paste0("Prom = ", round(exp(mu_hat + sd_hat^2 / 2) / 1e6),
                       " | DesvEst = ", round(sqrt((exp(sd_hat^2) - 1) * exp(2*mu_hat + sd_hat^2)) / 1e6)),
     x = "Valor del portafolio (millones)",
@@ -467,3 +467,33 @@ round(tabla, 3)
 
 
 ```
+
+# Resultados Sección II
+
+## Vía compra directa
+
+```{r}
+
+nuevas.acciones <- read_delim("../resultados/nuevas_acciones.csv", delim = ",")
+
+cd <- nuevas.acciones$compra.directa
+
+mean(cd + x)
+
+sd(cd + x)
+
+
+```
+
+## Vía Opciones Call-Europea
+
+```{r}
+
+ce <- nuevas.acciones$call.europea
+
+mean(ce + x)
+
+sd(ce + x)
+
+```
+

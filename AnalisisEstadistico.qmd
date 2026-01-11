@@ -1,0 +1,1232 @@
+---
+title: "AnalisisEstadistico"
+format: html
+editor: visual
+embed-resources: true
+---
+
+## Carga de las librerías necesarias 
+
+```{r}
+
+library(tidyverse)
+library(readr)
+library(fitdistrplus)
+library(goftest)
+library(scales)
+
+```
+
+
+## Carga de las Curvas Bono Cero Cupón
+
+```{r}
+
+curvas <- readr::read_delim(
+  "data/Curvas Cero Cupón.csv",
+  delim = ";",
+  locale = readr::locale(encoding = "Latin1")
+)
+
+curvas <- curvas %>%
+  rename(
+    curva_bccr_colones = `Curva Cero CupÃ³n BCCR (Colones)`,
+    curva_fed_dolares  = `Curva Cero CupÃ³n FED (DÃ³lares)`
+  )
+
+curvas
+
+```
+
+### Gráfico de las curvas Cero Cupón rho
+
+```{r}
+
+ggplot(curvas, aes(x = vencimiento, y = curva_bccr_colones)) +
+  
+  geom_line(linewidth = 1.2, color = "#1F4E79") +
+  scale_x_continuous(
+    breaks = scales::pretty_breaks(n = 8)
+  ) +
+  scale_y_continuous(
+    labels = scales::comma,
+    breaks = scales::pretty_breaks(n = 6)
+  ) +
+  labs(
+    title = "Curva Cero Cupón – BCCR (Colones)",
+    subtitle = "Precios descontados por vencimiento",
+    x = "Vencimiento (años)",
+    y = "Precio"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 11, hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    panel.grid.major = element_line(color = "grey85"),
+    panel.grid.minor = element_blank()
+  )
+
+```
+
+```{r}
+
+ggplot(curvas, aes(x = vencimiento, y = curva_fed_dolares)) +
+  
+  geom_line(linewidth = 1.2, color = "#1F4E79") +
+  scale_x_continuous(
+    breaks = scales::pretty_breaks(n = 8)
+  ) +
+  scale_y_continuous(
+    labels = scales::comma,
+    breaks = scales::pretty_breaks(n = 6)
+  ) +
+  labs(
+    title = "Curva Cero Cupón – FED (Dólares)",
+    subtitle = "Precios descontados por vencimiento",
+    x = "Vencimiento (años)",
+    y = "Precio"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 11, hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    panel.grid.major = element_line(color = "grey85"),
+    panel.grid.minor = element_blank()
+  )
+
+```
+
+## Inferencia estadística sobre el valor del portafolio para distintos horizontes
+
+### Horizonte a 0 años (hoy)
+
+El valor a hoy es conocido, entonces no tiene factores estocásticos :P
+```{r}
+
+ph0 <- read_csv("resultados/valor_actual_portafolio.csv")
+
+ph0$total.portafolio
+
+```
+
+
+### Horizonte a 4 años 
+
+```{r}
+
+ph4 <- read_csv("resultados/valor_portafolio_h4.csv")
+
+ph4_total <- ph4$total.portafolio
+
+mediana_ph4_total <- median(ph4_total)
+ph4_total_ajust <- ph4_total/mediana_ph4_total
+
+aj_gamma_h4  <- fitdist(ph4_total_ajust, "gamma")
+aj_lnorm_h4  <- fitdist(ph4_total_ajust, "lnorm")
+aj_norm_h4   <- fitdist(ph4_total_ajust, "norm")
+```
+
+
+```{r}
+
+gofstat(list(aj_gamma_h4, aj_lnorm_h4, aj_norm_h4))
+
+# Con base en los criterios de AIC y BIC se decide que el mejor modelo es el log-normal.
+
+```
+
+Ajustamos a distribución log-normal vía máxima verosimilitud. 
+```{r}
+
+ajuste_lnorm_h4 <- fitdist(ph4_total, "lnorm")
+
+mu_h4    <- unname(as.numeric(ajuste_lnorm_h4$estimate["meanlog"]))
+sigma_h4 <- unname(as.numeric(ajuste_lnorm_h4$estimate["sdlog"]))
+
+```
+
+Calculo de medias 
+```{r}
+
+df_plot_h4 <- data.frame(total = ph4_total)
+
+
+media_empirica_h4 <- mean(df_plot_h4$total)
+media_lognormal_h4 <- exp(mu_h4 + 0.5 * sigma_h4^2)
+
+media_empirica_h4
+media_lognormal_h4
+
+#Desviación estándar empírica: 
+sd(df_plot_h4$total)
+
+```
+
+#### Gráfico comparación de medias 
+
+```{r}
+
+lab_emp_h4 <- paste0("Media empírica: ", number(media_empirica_h4/1e6, accuracy = 1), " M")
+lab_lno_h4 <- paste0("Media lognormal: ", number(media_lognormal_h4/1e6, accuracy = 1), " M")
+
+niveles_h4 <- c(lab_emp_h4, lab_lno_h4)
+
+df_medias_h4 <- data.frame(
+  xint = c(media_empirica_h4, media_lognormal_h4),
+  lab  = factor(c(lab_emp_h4, lab_lno_h4), levels = niveles_h4),
+  tipo = c("empirica", "lognormal")
+)
+
+h_4 <- hist(df_plot_h4$total, breaks = 45, plot = FALSE)
+y_ok <- 0.2 * max(h_4$density)
+x0   <- min(df_plot_h4$total, na.rm = TRUE)
+
+df_leyenda_h4 <- data.frame(
+  x = c(x0, x0),
+  y = c(y_ok, y_ok),
+  lab = factor(niveles_h4, levels = niveles_h4)
+)
+
+ggplot(df_plot_h4, aes(x = total)) +
+  geom_histogram(
+    aes(y = after_stat(density)),
+    bins = 45,
+    fill = "#EEF3F8",
+    color = "#2C3E50",
+    linewidth = 0.35
+  ) +
+  stat_function(
+    fun = dlnorm,
+    args = list(meanlog = mu_h4, sdlog = sigma_h4),
+    linewidth = 1.2,
+    color = "#1F4E79"
+  ) +
+
+  geom_vline(
+    data = df_medias_h4,
+    aes(xintercept = xint, color = lab, linetype = tipo),
+    linewidth = 1.2,
+    show.legend = TRUE
+  ) +
+
+  geom_point(
+    data = df_leyenda_h4,
+    aes(x = x, y = y, color = lab),
+    alpha = 0,
+    size = 3,
+    inherit.aes = FALSE,
+    show.legend = TRUE
+  ) +
+
+  scale_color_manual(
+    name = "Medias",
+    values = setNames(c("#C0392B", "#F1C40F"), niveles_h4)
+  ) +
+  scale_linetype_manual(
+    name = "Medias",
+    values = c(empirica = "solid", lognormal = "dashed")
+  ) +
+  guides(
+    color = guide_legend(override.aes = list(alpha = 1, linewidth = 2)),
+    linetype = "none"
+  ) +
+
+  scale_x_continuous(
+    labels = function(x) paste0(number(x/1e6, accuracy = 1), " M")
+  ) +
+  labs(
+    title = "Valor del Portafolio (H4): Ajuste Lognormal",
+    subtitle = "Histograma empírico, curva lognormal y medias en millones",
+    x = "Total del portafolio (millones)",
+    y = "Densidad"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 10.8, hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "top",
+    legend.title = element_text(face = "bold")
+  )
+
+```
+
+Var/CVaR (empírico y lognormal)
+```{r}
+
+x <- df_plot_h4$total
+
+niveles_conf <- c(0.95, 0.30)
+
+var_emp <- sapply(niveles_conf, \(p) as.numeric(quantile(x, probs = 1 - p, na.rm = TRUE, type = 7)))
+cvar_emp <- sapply(seq_along(niveles_conf), \(i) mean(x[x <= var_emp[i]], na.rm = TRUE))
+
+var_lno <- sapply(niveles_conf, \(p) qlnorm(1 - p, meanlog = mu_h4, sdlog = sigma_h4))
+
+cvar_lno <- sapply(seq_along(niveles_conf), \(i) {
+  q <- var_lno[i]
+  z <- (log(q) - mu_h4) / sigma_h4
+  exp(mu_h4 + 0.5 * sigma_h4^2) * pnorm(z - sigma_h4) / pnorm(z)
+})
+
+var_emp 
+cvar_emp
+var_lno
+cvar_lno
+
+```
+
+```{r}
+
+lab_var_emp_95  <- paste0("VaR empírico 95%: ",  number(var_emp[1]/1e6, accuracy = 1), " M")
+lab_cvar_emp_95 <- paste0("CVaR empírico 95%: ", number(cvar_emp[1]/1e6, accuracy = 1), " M")
+lab_var_lno_95  <- paste0("VaR LN 95%: ", number(var_lno[1]/1e6, accuracy = 1), " M")
+lab_cvar_lno_95 <- paste0("CVaR LN 95%: ",number(cvar_lno[1]/1e6, accuracy = 1), " M")
+
+lab_var_emp_30  <- paste0("VaR empírico 30%: ",  number(var_emp[2]/1e6, accuracy = 1), " M")
+lab_cvar_emp_30 <- paste0("CVaR empírico 30%: ", number(cvar_emp[2]/1e6, accuracy = 1), " M")
+lab_var_lno_30  <- paste0("VaR LN 30%: ", number(var_lno[2]/1e6, accuracy = 1), " M")
+lab_cvar_lno_30 <- paste0("CVaR LN 30%: ",number(cvar_lno[2]/1e6, accuracy = 1), " M")
+
+niveles_lineas <- c(
+  lab_var_emp_95, lab_cvar_emp_95, lab_var_lno_95, lab_cvar_lno_95,
+  lab_var_emp_30, lab_cvar_emp_30, lab_var_lno_30, lab_cvar_lno_30
+)
+
+df_lineas <- data.frame(
+  xint = c(var_emp[1], cvar_emp[1], var_lno[1], cvar_lno[1],
+           var_emp[2], cvar_emp[2], var_lno[2], cvar_lno[2]),
+  lab  = factor(niveles_lineas, levels = niveles_lineas),
+  metrica = c("VaR","CVaR","VaR","CVaR","VaR","CVaR","VaR","CVaR"),
+  metodo  = c("emp","emp","lno","lno","emp","emp","lno","lno"),
+  nivel   = c("95%","95%","95%","95%","30%","30%","30%","30%")
+)
+
+h_4 <- hist(df_plot_h4$total, breaks = 45, plot = FALSE)
+y_ok <- 0.2 * max(h_4$density)
+x0   <- min(df_plot_h4$total, na.rm = TRUE)
+
+df_leyenda_h4 <- data.frame(
+  x = rep(x0, length(niveles_lineas)),
+  y = rep(y_ok, length(niveles_lineas)),
+  lab = factor(niveles_lineas, levels = niveles_lineas)
+)
+
+ggplot(df_plot_h4, aes(x = total)) +
+  geom_histogram(
+    aes(y = after_stat(density)),
+    bins = 45,
+    fill = "#EEF3F8",
+    color = "#2C3E50",
+    linewidth = 0.35
+  ) +
+  stat_function(
+    fun = dlnorm,
+    args = list(meanlog = mu_h4, sdlog = sigma_h4),
+    linewidth = 1.2,
+    color = "#1F4E79"
+  ) +
+
+  geom_vline(
+    data = df_lineas,
+    aes(xintercept = xint, color = lab, linetype = metrica),
+    linewidth = 1.2,
+    show.legend = TRUE
+  ) +
+
+  geom_point(
+    data = df_leyenda_h4,
+    aes(x = x, y = y, color = lab),
+    alpha = 0,
+    size = 3,
+    inherit.aes = FALSE,
+    show.legend = TRUE
+  ) +
+
+  scale_color_manual(
+    name = "VaR / CVaR",
+    values = setNames(
+      c("#C0392B","#C0392B","#F1C40F","#F1C40F",
+        "#8E44AD","#8E44AD","#16A085","#16A085"),
+      niveles_lineas
+    )
+  ) +
+  scale_linetype_manual(
+    name = "VaR / CVaR",
+    values = c(VaR = "solid", CVaR = "dashed")
+  ) +
+  
+  guides(
+  color = guide_legend(
+    override.aes = list(alpha = 1, linewidth = 2),
+    nrow = 2,
+    byrow = TRUE
+  ),
+  linetype = "none"
+) +
+
+
+  scale_x_continuous(
+    labels = function(x) paste0(number(x/1e6, accuracy = 1), " M")
+  ) +
+  
+  labs(
+    title = "Valor del Portafolio (H4): Ajuste Lognormal",
+    subtitle = "Histograma empírico, curva lognormal y VaR/CVaR (95% y 30%) en millones",
+    x = "Total del portafolio (millones)",
+    y = "Densidad"
+  ) +
+  
+  theme_minimal(base_size = 8.5) +
+  
+   theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 10.8, hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "top",
+    legend.title = element_text(face = "bold")
+  )
+
+```
+
+### Horizonte a 7 años 
+
+```{r}
+
+ph7 <- read_csv("resultados/valor_portafolio_h7.csv")
+
+ph7_total <- ph7$total.portafolio
+
+mediana_ph7_total <- median(ph7_total)
+ph7_total_ajust <- ph7_total/mediana_ph7_total
+
+aj_gamma_h7  <- fitdist(ph7_total_ajust, "gamma")
+aj_lnorm_h7  <- fitdist(ph7_total_ajust, "lnorm")
+aj_norm_h7   <- fitdist(ph7_total_ajust, "norm")
+```
+
+
+```{r}
+
+gofstat(list(aj_gamma_h7, aj_lnorm_h7, aj_norm_h7))
+
+# Con base en los criterios de AIC y BIC se decide que el mejor modelo es el log-normal.
+
+```
+
+Ajustamos a distribución log-normal vía máxima verosimilitud. 
+```{r}
+
+ajuste_lnorm_h7 <- fitdist(ph7_total, "lnorm")
+
+mu_h7    <- unname(as.numeric(ajuste_lnorm_h7$estimate["meanlog"]))
+sigma_h7 <- unname(as.numeric(ajuste_lnorm_h7$estimate["sdlog"]))
+
+```
+
+Calculo de medias 
+```{r}
+
+df_plot_h7 <- data.frame(total = ph7_total)
+
+media_empirica_h7 <- mean(df_plot_h7$total)
+media_lognormal_h7 <- exp(mu_h7 + 0.5 * sigma_h7^2)
+
+media_empirica_h7
+media_lognormal_h7
+#Desviación estándar empírica: 
+sd(df_plot_h7$total)
+
+```
+
+#### Gráfico comparación de medias 
+
+```{r}
+
+lab_emp_h7 <- paste0("Media empírica: ", number(media_empirica_h7/1e6, accuracy = 1), " M")
+lab_lno_h7 <- paste0("Media lognormal: ", number(media_lognormal_h7/1e6, accuracy = 1), " M")
+
+niveles_h7 <- c(lab_emp_h7, lab_lno_h7)
+
+df_medias_h7 <- data.frame(
+  xint = c(media_empirica_h7, media_lognormal_h7),
+  lab  = factor(c(lab_emp_h7, lab_lno_h7), levels = niveles_h7),
+  tipo = c("empirica", "lognormal")
+)
+
+h_7 <- hist(df_plot_h7$total, breaks = 45, plot = FALSE)
+y_ok <- 0.2 * max(h_7$density)
+x0   <- min(df_plot_h7$total, na.rm = TRUE)
+
+df_leyenda_h7 <- data.frame(
+  x = c(x0, x0),
+  y = c(y_ok, y_ok),
+  lab = factor(niveles_h7, levels = niveles_h7)
+)
+
+ggplot(df_plot_h7, aes(x = total)) +
+  geom_histogram(
+    aes(y = after_stat(density)),
+    bins = 45,
+    fill = "#EEF3F8",
+    color = "#2C3E50",
+    linewidth = 0.35
+  ) +
+  stat_function(
+    fun = dlnorm,
+    args = list(meanlog = mu_h7, sdlog = sigma_h7),
+    linewidth = 1.2,
+    color = "#1F4E79"
+  ) +
+
+  geom_vline(
+    data = df_medias_h7,
+    aes(xintercept = xint, color = lab, linetype = tipo),
+    linewidth = 1.2,
+    show.legend = TRUE
+  ) +
+
+  geom_point(
+    data = df_leyenda_h7,
+    aes(x = x, y = y, color = lab),
+    alpha = 0,
+    size = 3,
+    inherit.aes = FALSE,
+    show.legend = TRUE
+  ) +
+
+  scale_color_manual(
+    name = "Medias",
+    values = setNames(c("#C0392B", "#F1C40F"), niveles_h7)
+  ) +
+  scale_linetype_manual(
+    name = "Medias",
+    values = c(empirica = "solid", lognormal = "dashed")
+  ) +
+  guides(
+    color = guide_legend(override.aes = list(alpha = 1, linewidth = 2)),
+    linetype = "none"
+  ) +
+
+  scale_x_continuous(
+    labels = function(x) paste0(number(x/1e6, accuracy = 1), " M")
+  ) +
+  labs(
+    title = "Valor del Portafolio (H7): Ajuste Lognormal",
+    subtitle = "Histograma empírico, curva lognormal y medias en millones",
+    x = "Total del portafolio (millones)",
+    y = "Densidad"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 10.8, hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "top",
+    legend.title = element_text(face = "bold")
+  )
+
+```
+
+Var/CVaR (empírico y lognormal)
+```{r}
+
+x <- df_plot_h7$total
+
+niveles_conf <- c(0.95, 0.30)
+
+var_emp <- sapply(niveles_conf, \(p) as.numeric(quantile(x, probs = 1 - p, na.rm = TRUE, type = 7)))
+cvar_emp <- sapply(seq_along(niveles_conf), \(i) mean(x[x <= var_emp[i]], na.rm = TRUE))
+
+var_lno <- sapply(niveles_conf, \(p) qlnorm(1 - p, meanlog = mu_h7, sdlog = sigma_h7))
+
+cvar_lno <- sapply(seq_along(niveles_conf), \(i) {
+  q <- var_lno[i]
+  z <- (log(q) - mu_h7) / sigma_h7
+  exp(mu_h7 + 0.5 * sigma_h7^2) * pnorm(z - sigma_h7) / pnorm(z)
+})
+
+var_emp 
+cvar_emp
+var_lno
+cvar_lno
+
+```
+
+```{r}
+
+lab_var_emp_95  <- paste0("VaR empírico 95%: ",  number(var_emp[1]/1e6, accuracy = 1), " M")
+lab_cvar_emp_95 <- paste0("CVaR empírico 95%: ", number(cvar_emp[1]/1e6, accuracy = 1), " M")
+lab_var_lno_95  <- paste0("VaR LN 95%: ", number(var_lno[1]/1e6, accuracy = 1), " M")
+lab_cvar_lno_95 <- paste0("CVaR LN 95%: ",number(cvar_lno[1]/1e6, accuracy = 1), " M")
+
+lab_var_emp_30  <- paste0("VaR empírico 30%: ",  number(var_emp[2]/1e6, accuracy = 1), " M")
+lab_cvar_emp_30 <- paste0("CVaR empírico 30%: ", number(cvar_emp[2]/1e6, accuracy = 1), " M")
+lab_var_lno_30  <- paste0("VaR LN 30%: ", number(var_lno[2]/1e6, accuracy = 1), " M")
+lab_cvar_lno_30 <- paste0("CVaR LN 30%: ",number(cvar_lno[2]/1e6, accuracy = 1), " M")
+
+niveles_lineas <- c(
+  lab_var_emp_95, lab_cvar_emp_95, lab_var_lno_95, lab_cvar_lno_95,
+  lab_var_emp_30, lab_cvar_emp_30, lab_var_lno_30, lab_cvar_lno_30
+)
+
+df_lineas <- data.frame(
+  xint = c(var_emp[1], cvar_emp[1], var_lno[1], cvar_lno[1],
+           var_emp[2], cvar_emp[2], var_lno[2], cvar_lno[2]),
+  lab  = factor(niveles_lineas, levels = niveles_lineas),
+  metrica = c("VaR","CVaR","VaR","CVaR","VaR","CVaR","VaR","CVaR"),
+  metodo  = c("emp","emp","lno","lno","emp","emp","lno","lno"),
+  nivel   = c("95%","95%","95%","95%","30%","30%","30%","30%")
+)
+
+h_7 <- hist(df_plot_h7$total, breaks = 45, plot = FALSE)
+y_ok <- 0.2 * max(h_7$density)
+x0   <- min(df_plot_h7$total, na.rm = TRUE)
+
+df_leyenda_h7 <- data.frame(
+  x = rep(x0, length(niveles_lineas)),
+  y = rep(y_ok, length(niveles_lineas)),
+  lab = factor(niveles_lineas, levels = niveles_lineas)
+)
+
+ggplot(df_plot_h7, aes(x = total)) +
+  geom_histogram(
+    aes(y = after_stat(density)),
+    bins = 45,
+    fill = "#EEF3F8",
+    color = "#2C3E50",
+    linewidth = 0.35
+  ) +
+  stat_function(
+    fun = dlnorm,
+    args = list(meanlog = mu_h7, sdlog = sigma_h7),
+    linewidth = 1.2,
+    color = "#1F4E79"
+  ) +
+
+  geom_vline(
+    data = df_lineas,
+    aes(xintercept = xint, color = lab, linetype = metrica),
+    linewidth = 1.2,
+    show.legend = TRUE
+  ) +
+
+  geom_point(
+    data = df_leyenda_h7,
+    aes(x = x, y = y, color = lab),
+    alpha = 0,
+    size = 3,
+    inherit.aes = FALSE,
+    show.legend = TRUE
+  ) +
+
+  scale_color_manual(
+    name = "VaR / CVaR",
+    values = setNames(
+      c("#C0392B","#C0392B","#F1C40F","#F1C40F",
+        "#8E44AD","#8E44AD","#16A085","#16A085"),
+      niveles_lineas
+    )
+  ) +
+  scale_linetype_manual(
+    name = "VaR / CVaR",
+    values = c(VaR = "solid", CVaR = "dashed")
+  ) +
+  
+  guides(
+  color = guide_legend(
+    override.aes = list(alpha = 1, linewidth = 2),
+    nrow = 2,
+    byrow = TRUE
+  ),
+  linetype = "none"
+) +
+
+
+  scale_x_continuous(
+    labels = function(x) paste0(number(x/1e6, accuracy = 1), " M")
+  ) +
+  
+  labs(
+    title = "Valor del Portafolio (H7): Ajuste Lognormal",
+    subtitle = "Histograma empírico, curva lognormal y VaR/CVaR (95% y 30%) en millones",
+    x = "Total del portafolio (millones)",
+    y = "Densidad"
+  ) +
+  
+  theme_minimal(base_size = 8.5) +
+  
+   theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 10.8, hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "top",
+    legend.title = element_text(face = "bold")
+  )
+
+```
+
+### Horizonte a 10 años 
+
+```{r}
+
+ph10 <- read_csv("resultados/valor_portafolio_h10.csv")
+
+ph10_total <- ph10$total.portafolio
+
+mediana_ph10_total <- median(ph10_total)
+ph10_total_ajust <- ph10_total/mediana_ph10_total
+
+aj_gamma_h10  <- fitdist(ph10_total_ajust, "gamma")
+aj_lnorm_h10  <- fitdist(ph10_total_ajust, "lnorm")
+aj_norm_h10   <- fitdist(ph10_total_ajust, "norm")
+```
+
+
+```{r}
+
+gofstat(list(aj_gamma_h10, aj_lnorm_h10, aj_norm_h10))
+
+# Con base en los criterios de AIC y BIC se decide que el mejor modelo es el log-normal.
+
+```
+
+Ajustamos a distribución log-normal vía máxima verosimilitud. 
+```{r}
+
+ajuste_lnorm_h10 <- fitdist(ph10_total, "lnorm")
+
+mu_h10    <- unname(as.numeric(ajuste_lnorm_h10$estimate["meanlog"]))
+sigma_h10 <- unname(as.numeric(ajuste_lnorm_h10$estimate["sdlog"]))
+
+```
+
+Calculo de medias 
+```{r}
+
+df_plot_h10<- data.frame(total = ph10_total)
+
+media_empirica_h10 <- mean(df_plot_h10$total)
+media_lognormal_h10 <- exp(mu_h10 + 0.5 * sigma_h10^2)
+
+media_empirica_h10
+media_lognormal_h10
+
+sd(df_plot_h10$total)
+
+```
+
+#### Gráfico comparación de medias 
+
+```{r}
+
+lab_emp_h10 <- paste0("Media empírica: ", number(media_empirica_h10/1e6, accuracy = 1), " M")
+lab_lno_h10 <- paste0("Media lognormal: ", number(media_lognormal_h10/1e6, accuracy = 1), " M")
+
+niveles_h10 <- c(lab_emp_h10, lab_lno_h10)
+
+df_medias_h10 <- data.frame(
+  xint = c(media_empirica_h10, media_lognormal_h10),
+  lab  = factor(c(lab_emp_h10, lab_lno_h10), levels = niveles_h10),
+  tipo = c("empirica", "lognormal")
+)
+
+h_10 <- hist(df_plot_h10$total, breaks = 45, plot = FALSE)
+y_ok <- 0.2 * max(h_10$density)
+x0   <- min(df_plot_h10$total, na.rm = TRUE)
+
+df_leyenda_h10 <- data.frame(
+  x = c(x0, x0),
+  y = c(y_ok, y_ok),
+  lab = factor(niveles_h10, levels = niveles_h10)
+)
+
+ggplot(df_plot_h10, aes(x = total)) +
+  geom_histogram(
+    aes(y = after_stat(density)),
+    bins = 45,
+    fill = "#EEF3F8",
+    color = "#2C3E50",
+    linewidth = 0.35
+  ) +
+  stat_function(
+    fun = dlnorm,
+    args = list(meanlog = mu_h10, sdlog = sigma_h10),
+    linewidth = 1.2,
+    color = "#1F4E79"
+  ) +
+
+  geom_vline(
+    data = df_medias_h10,
+    aes(xintercept = xint, color = lab, linetype = tipo),
+    linewidth = 1.2,
+    show.legend = TRUE
+  ) +
+
+  geom_point(
+    data = df_leyenda_h10,
+    aes(x = x, y = y, color = lab),
+    alpha = 0,
+    size = 3,
+    inherit.aes = FALSE,
+    show.legend = TRUE
+  ) +
+
+  scale_color_manual(
+    name = "Medias",
+    values = setNames(c("#C0392B", "#F1C40F"), niveles_h10)
+  ) +
+  scale_linetype_manual(
+    name = "Medias",
+    values = c(empirica = "solid", lognormal = "dashed")
+  ) +
+  guides(
+    color = guide_legend(override.aes = list(alpha = 1, linewidth = 2)),
+    linetype = "none"
+  ) +
+
+  scale_x_continuous(
+    labels = function(x) paste0(number(x/1e6, accuracy = 1), " M")
+  ) +
+  labs(
+    title = "Valor del Portafolio (H10): Ajuste Lognormal",
+    subtitle = "Histograma empírico, curva lognormal y medias en millones",
+    x = "Total del portafolio (millones)",
+    y = "Densidad"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 10.8, hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "top",
+    legend.title = element_text(face = "bold")
+  )
+
+```
+
+Var/CVaR (empírico y lognormal)
+```{r}
+
+x <- df_plot_h10$total
+
+niveles_conf <- c(0.95, 0.30)
+
+var_emp <- sapply(niveles_conf, \(p) as.numeric(quantile(x, probs = 1 - p, na.rm = TRUE, type = 7)))
+cvar_emp <- sapply(seq_along(niveles_conf), \(i) mean(x[x <= var_emp[i]], na.rm = TRUE))
+
+var_lno <- sapply(niveles_conf, \(p) qlnorm(1 - p, meanlog = mu_h10, sdlog = sigma_h10))
+
+cvar_lno <- sapply(seq_along(niveles_conf), \(i) {
+  q <- var_lno[i]
+  z <- (log(q) - mu_h10) / sigma_h10
+  exp(mu_h10 + 0.5 * sigma_h10^2) * pnorm(z - sigma_h10) / pnorm(z)
+})
+
+var_emp 
+cvar_emp
+var_lno
+cvar_lno
+
+```
+
+```{r}
+
+lab_var_emp_95  <- paste0("VaR empírico 95%: ",  number(var_emp[1]/1e6, accuracy = 1), " M")
+lab_cvar_emp_95 <- paste0("CVaR empírico 95%: ", number(cvar_emp[1]/1e6, accuracy = 1), " M")
+lab_var_lno_95  <- paste0("VaR LN 95%: ", number(var_lno[1]/1e6, accuracy = 1), " M")
+lab_cvar_lno_95 <- paste0("CVaR LN 95%: ",number(cvar_lno[1]/1e6, accuracy = 1), " M")
+
+lab_var_emp_30  <- paste0("VaR empírico 30%: ",  number(var_emp[2]/1e6, accuracy = 1), " M")
+lab_cvar_emp_30 <- paste0("CVaR empírico 30%: ", number(cvar_emp[2]/1e6, accuracy = 1), " M")
+lab_var_lno_30  <- paste0("VaR LN 30%: ", number(var_lno[2]/1e6, accuracy = 1), " M")
+lab_cvar_lno_30 <- paste0("CVaR LN 30%: ",number(cvar_lno[2]/1e6, accuracy = 1), " M")
+
+niveles_lineas <- c(
+  lab_var_emp_95, lab_cvar_emp_95, lab_var_lno_95, lab_cvar_lno_95,
+  lab_var_emp_30, lab_cvar_emp_30, lab_var_lno_30, lab_cvar_lno_30
+)
+
+df_lineas <- data.frame(
+  xint = c(var_emp[1], cvar_emp[1], var_lno[1], cvar_lno[1],
+           var_emp[2], cvar_emp[2], var_lno[2], cvar_lno[2]),
+  lab  = factor(niveles_lineas, levels = niveles_lineas),
+  metrica = c("VaR","CVaR","VaR","CVaR","VaR","CVaR","VaR","CVaR"),
+  metodo  = c("emp","emp","lno","lno","emp","emp","lno","lno"),
+  nivel   = c("95%","95%","95%","95%","30%","30%","30%","30%")
+)
+
+h_10 <- hist(df_plot_h10$total, breaks = 45, plot = FALSE)
+y_ok <- 0.2 * max(h_10$density)
+x0   <- min(df_plot_h10$total, na.rm = TRUE)
+
+df_leyenda_h10 <- data.frame(
+  x = rep(x0, length(niveles_lineas)),
+  y = rep(y_ok, length(niveles_lineas)),
+  lab = factor(niveles_lineas, levels = niveles_lineas)
+)
+
+ggplot(df_plot_h10, aes(x = total)) +
+  geom_histogram(
+    aes(y = after_stat(density)),
+    bins = 45,
+    fill = "#EEF3F8",
+    color = "#2C3E50",
+    linewidth = 0.35
+  ) +
+  stat_function(
+    fun = dlnorm,
+    args = list(meanlog = mu_h10, sdlog = sigma_h10),
+    linewidth = 1.2,
+    color = "#1F4E79"
+  ) +
+
+  geom_vline(
+    data = df_lineas,
+    aes(xintercept = xint, color = lab, linetype = metrica),
+    linewidth = 1.2,
+    show.legend = TRUE
+  ) +
+
+  geom_point(
+    data = df_leyenda_h10,
+    aes(x = x, y = y, color = lab),
+    alpha = 0,
+    size = 3,
+    inherit.aes = FALSE,
+    show.legend = TRUE
+  ) +
+
+  scale_color_manual(
+    name = "VaR / CVaR",
+    values = setNames(
+      c("#C0392B","#C0392B","#F1C40F","#F1C40F",
+        "#8E44AD","#8E44AD","#16A085","#16A085"),
+      niveles_lineas
+    )
+  ) +
+  scale_linetype_manual(
+    name = "VaR / CVaR",
+    values = c(VaR = "solid", CVaR = "dashed")
+  ) +
+  
+  guides(
+  color = guide_legend(
+    override.aes = list(alpha = 1, linewidth = 2),
+    nrow = 2,
+    byrow = TRUE
+  ),
+  linetype = "none"
+) +
+
+
+  scale_x_continuous(
+    labels = function(x) paste0(number(x/1e6, accuracy = 1), " M")
+  ) +
+  
+  labs(
+    title = "Valor del Portafolio (H10): Ajuste Lognormal",
+    subtitle = "Histograma empírico, curva lognormal y VaR/CVaR (95% y 30%) en millones",
+    x = "Total del portafolio (millones)",
+    y = "Densidad"
+  ) +
+  
+  theme_minimal(base_size = 8.5) +
+  
+   theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 10.8, hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "top",
+    legend.title = element_text(face = "bold")
+  )
+
+```
+
+### Horizonte a 15 años 
+
+```{r}
+
+ph15 <- read_csv("resultados/valor_portafolio_h15.csv")
+
+ph15_total <- ph15$total.portafolio
+
+mediana_ph15_total <- median(ph15_total)
+ph15_total_ajust <- ph15_total/mediana_ph15_total
+
+aj_gamma_h15  <- fitdist(ph15_total_ajust, "gamma")
+aj_lnorm_h15  <- fitdist(ph15_total_ajust, "lnorm")
+aj_norm_h15   <- fitdist(ph15_total_ajust, "norm")
+```
+
+
+```{r}
+
+gofstat(list(aj_gamma_h15, aj_lnorm_h15, aj_norm_h15))
+
+# Con base en los criterios de AIC y BIC se decide que el mejor modelo es el log-normal.
+
+```
+
+Ajustamos a distribución log-normal vía máxima verosimilitud. 
+```{r}
+
+ajuste_lnorm_h15 <- fitdist(ph15_total, "lnorm")
+
+mu_h15    <- unname(as.numeric(ajuste_lnorm_h15$estimate["meanlog"]))
+sigma_h15 <- unname(as.numeric(ajuste_lnorm_h15$estimate["sdlog"]))
+
+```
+
+Calculo de medias 
+```{r}
+
+df_plot_h15<- data.frame(total = ph15_total)
+
+media_empirica_h15 <- mean(df_plot_h15$total)
+media_lognormal_h15 <- exp(mu_h15 + 0.5 * sigma_h15^2)
+
+media_empirica_h15
+media_lognormal_h15
+
+sd(df_plot_h15$total)
+
+```
+
+#### Gráfico comparación de medias 
+
+```{r}
+
+lab_emp_h15 <- paste0("Media empírica: ", number(media_empirica_h15/1e6, accuracy = 1), " M")
+lab_lno_h15 <- paste0("Media lognormal: ", number(media_lognormal_h15/1e6, accuracy = 1), " M")
+
+niveles_h15 <- c(lab_emp_h15, lab_lno_h15)
+
+df_medias_h15 <- data.frame(
+  xint = c(media_empirica_h15, media_lognormal_h15),
+  lab  = factor(c(lab_emp_h15, lab_lno_h15), levels = niveles_h15),
+  tipo = c("empirica", "lognormal")
+)
+
+h_15 <- hist(df_plot_h15$total, breaks = 45, plot = FALSE)
+y_ok <- 0.2 * max(h_15$density)
+x0   <- min(df_plot_h15$total, na.rm = TRUE)
+
+df_leyenda_h15 <- data.frame(
+  x = c(x0, x0),
+  y = c(y_ok, y_ok),
+  lab = factor(niveles_h15, levels = niveles_h15)
+)
+
+ggplot(df_plot_h15, aes(x = total)) +
+  geom_histogram(
+    aes(y = after_stat(density)),
+    bins = 45,
+    fill = "#EEF3F8",
+    color = "#2C3E50",
+    linewidth = 0.35
+  ) +
+  stat_function(
+    fun = dlnorm,
+    args = list(meanlog = mu_h15, sdlog = sigma_h15),
+    linewidth = 1.2,
+    color = "#1F4E79"
+  ) +
+
+  geom_vline(
+    data = df_medias_h15,
+    aes(xintercept = xint, color = lab, linetype = tipo),
+    linewidth = 1.2,
+    show.legend = TRUE
+  ) +
+
+  geom_point(
+    data = df_leyenda_h15,
+    aes(x = x, y = y, color = lab),
+    alpha = 0,
+    size = 3,
+    inherit.aes = FALSE,
+    show.legend = TRUE
+  ) +
+
+  scale_color_manual(
+    name = "Medias",
+    values = setNames(c("#C0392B", "#F1C40F"), niveles_h15)
+  ) +
+  scale_linetype_manual(
+    name = "Medias",
+    values = c(empirica = "solid", lognormal = "dashed")
+  ) +
+  guides(
+    color = guide_legend(override.aes = list(alpha = 1, linewidth = 2)),
+    linetype = "none"
+  ) +
+
+  scale_x_continuous(
+    labels = function(x) paste0(number(x/1e6, accuracy = 1), " M")
+  ) +
+  labs(
+    title = "Valor del Portafolio (H15): Ajuste Lognormal",
+    subtitle = "Histograma empírico, curva lognormal y medias en millones",
+    x = "Total del portafolio (millones)",
+    y = "Densidad"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 10.8, hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "top",
+    legend.title = element_text(face = "bold")
+  )
+
+```
+
+Var/CVaR (empírico y lognormal)
+```{r}
+
+x <- df_plot_h15$total
+
+niveles_conf <- c(0.95, 0.30)
+
+var_emp <- sapply(niveles_conf, \(p) as.numeric(quantile(x, probs = 1 - p, na.rm = TRUE, type = 7)))
+cvar_emp <- sapply(seq_along(niveles_conf), \(i) mean(x[x <= var_emp[i]], na.rm = TRUE))
+
+var_lno <- sapply(niveles_conf, \(p) qlnorm(1 - p, meanlog = mu_h15, sdlog = sigma_h15))
+
+cvar_lno <- sapply(seq_along(niveles_conf), \(i) {
+  q <- var_lno[i]
+  z <- (log(q) - mu_h15) / sigma_h15
+  
+  exp(mu_h15 + 0.5 * sigma_h15^2) * pnorm(z - sigma_h15) / pnorm(z)
+})
+
+var_emp 
+cvar_emp
+var_lno
+cvar_lno
+
+```
+
+```{r}
+
+lab_var_emp_95  <- paste0("VaR empírico 95%: ",  number(var_emp[1]/1e6, accuracy = 1), " M")
+lab_cvar_emp_95 <- paste0("CVaR empírico 95%: ", number(cvar_emp[1]/1e6, accuracy = 1), " M")
+lab_var_lno_95  <- paste0("VaR LN 95%: ", number(var_lno[1]/1e6, accuracy = 1), " M")
+lab_cvar_lno_95 <- paste0("CVaR LN 95%: ",number(cvar_lno[1]/1e6, accuracy = 1), " M")
+
+lab_var_emp_30  <- paste0("VaR empírico 30%: ",  number(var_emp[2]/1e6, accuracy = 1), " M")
+lab_cvar_emp_30 <- paste0("CVaR empírico 30%: ", number(cvar_emp[2]/1e6, accuracy = 1), " M")
+lab_var_lno_30  <- paste0("VaR LN 30%: ", number(var_lno[2]/1e6, accuracy = 1), " M")
+lab_cvar_lno_30 <- paste0("CVaR LN 30%: ",number(cvar_lno[2]/1e6, accuracy = 1), " M")
+
+niveles_lineas <- c(
+  lab_var_emp_95, lab_cvar_emp_95, lab_var_lno_95, lab_cvar_lno_95,
+  lab_var_emp_30, lab_cvar_emp_30, lab_var_lno_30, lab_cvar_lno_30
+)
+
+df_lineas <- data.frame(
+  xint = c(var_emp[1], cvar_emp[1], var_lno[1], cvar_lno[1],
+           var_emp[2], cvar_emp[2], var_lno[2], cvar_lno[2]),
+  lab  = factor(niveles_lineas, levels = niveles_lineas),
+  metrica = c("VaR","CVaR","VaR","CVaR","VaR","CVaR","VaR","CVaR"),
+  metodo  = c("emp","emp","lno","lno","emp","emp","lno","lno"),
+  nivel   = c("95%","95%","95%","95%","30%","30%","30%","30%")
+)
+
+h_15 <- hist(df_plot_h15$total, breaks = 45, plot = FALSE)
+y_ok <- 0.2 * max(h_15$density)
+x0   <- min(df_plot_h15$total, na.rm = TRUE)
+
+df_leyenda_h15 <- data.frame(
+  x = rep(x0, length(niveles_lineas)),
+  y = rep(y_ok, length(niveles_lineas)),
+  lab = factor(niveles_lineas, levels = niveles_lineas)
+)
+
+ggplot(df_plot_h15, aes(x = total)) +
+  geom_histogram(
+    aes(y = after_stat(density)),
+    bins = 45,
+    fill = "#EEF3F8",
+    color = "#2C3E50",
+    linewidth = 0.35
+  ) +
+  stat_function(
+    fun = dlnorm,
+    args = list(meanlog = mu_h15, sdlog = sigma_h15),
+    linewidth = 1.2,
+    color = "#1F4E79"
+  ) +
+
+  geom_vline(
+    data = df_lineas,
+    aes(xintercept = xint, color = lab, linetype = metrica),
+    linewidth = 1.2,
+    show.legend = TRUE
+  ) +
+
+  geom_point(
+    data = df_leyenda_h15,
+    aes(x = x, y = y, color = lab),
+    alpha = 0,
+    size = 3,
+    inherit.aes = FALSE,
+    show.legend = TRUE
+  ) +
+
+  scale_color_manual(
+    name = "VaR / CVaR",
+    values = setNames(
+      c("#C0392B","#C0392B","#F1C40F","#F1C40F",
+        "#8E44AD","#8E44AD","#16A085","#16A085"),
+      niveles_lineas
+    )
+  ) +
+  scale_linetype_manual(
+    name = "VaR / CVaR",
+    values = c(VaR = "solid", CVaR = "dashed")
+  ) +
+  
+  guides(
+  color = guide_legend(
+    override.aes = list(alpha = 1, linewidth = 2),
+    nrow = 2,
+    byrow = TRUE
+  ),
+  linetype = "none"
+) +
+
+
+  scale_x_continuous(
+    labels = function(x) paste0(number(x/1e6, accuracy = 1), " M")
+  ) +
+  
+  labs(
+    title = "Valor del Portafolio (H15): Ajuste Lognormal",
+    subtitle = "Histograma empírico, curva lognormal y VaR/CVaR (95% y 30%) en millones",
+    x = "Total del portafolio (millones)",
+    y = "Densidad"
+  ) +
+  
+  theme_minimal(base_size = 8.5) +
+  
+   theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 10.8, hjust = 0.5),
+    axis.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "top",
+    legend.title = element_text(face = "bold")
+  )
+
+```

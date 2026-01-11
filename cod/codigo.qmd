@@ -814,6 +814,13 @@ estadisticas.riesgo <- function(
 # Sección 1
 
 ```{r}
+h7 <- read.csv("../resultados/valor_portafolio_h7.csv", sep = ",")
+
+head(h7)
+```
+
+
+```{r}
 
 # Extrae la curva cero cupon (rhos) para Costa Rica y Estados Unidos
 CCC <- read.csv("../data/Curvas Cero Cupón.csv", sep = ";")
